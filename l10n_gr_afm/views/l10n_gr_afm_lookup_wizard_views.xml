@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Vlassis Emmanouil
+     License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl). -->
+<odoo>
+
+    <record id="l10n_gr_afm_lookup_wizard_view_form" model="ir.ui.view">
+        <field name="name">l10n_gr_afm.lookup.wizard.form</field>
+        <field name="model">l10n_gr_afm.lookup.wizard</field>
+        <field name="arch" type="xml">
+            <form string="AADE Lookup Result">
+                <div class="alert alert-warning" role="alert"
+                     invisible="not afm_is_inactive">
+                    <strong>Warning:</strong> This VAT number is inactive (deactivated).
+                </div>
+                <group>
+                    <group string="Company Details">
+                        <field name="afm_name"/>
+                        <field name="afm_legal_status"/>
+                        <field name="afm_entity_type"/>
+                        <field name="afm_business_status"/>
+                        <field name="afm_vat_status"/>
+                        <field name="afm_regist_date"/>
+                    </group>
+                    <group string="Address">
+                        <field name="afm_street"/>
+                        <field name="afm_zip"/>
+                        <field name="afm_city"/>
+                    </group>
+                </group>
+                <group>
+                    <group string="Tax Registry">
+                        <field name="afm_doy"/>
+                    </group>
+                    <group string="Main Activity">
+                        <field name="afm_kad_code"/>
+                        <field name="afm_kad_descr"/>
+                    </group>
+                </group>
+                <field name="partner_id" invisible="1"/>
+                <field name="afm_is_inactive" invisible="1"/>
+                <footer>
+                    <button name="action_apply" string="Apply" type="object" class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="l10n_gr_afm_lookup_wizard_action" model="ir.actions.act_window">
+        <field name="name">AADE Lookup Result</field>
+        <field name="res_model">l10n_gr_afm.lookup.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+</odoo>

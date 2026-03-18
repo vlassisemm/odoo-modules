@@ -1,0 +1,214 @@
+# Translation template for l10n_gr_afm module
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 19.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-03-18 00:00+0000\n"
+"PO-Revision-Date: 2026-03-18 00:00+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_res_company__l10n_gr_afm_aade_username
+msgid "AADE Username"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_res_company__l10n_gr_afm_aade_password
+msgid "AADE Password"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_res_partner__l10n_gr_afm_doy
+msgid "Tax Office (DOY)"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_res_partner__l10n_gr_afm_kad_descr
+msgid "Main Activity Description"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_kad_code
+msgid "Main Activity Code (KAD)"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.view_partner_form_inherit_l10n_gr_afm
+msgid "Fetch from AADE"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_name
+msgid "Company Name"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_street
+msgid "Street Address"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_zip
+msgid "Postal Code"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_city
+msgid "City"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_legal_status
+msgid "Legal Form"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_vat_status
+msgid "VAT Status"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_entity_type
+msgid "Entity Type"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_business_status
+msgid "Business Status"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model.fields,field_description:l10n_gr_afm.field_l10n_gr_afm_lookup_wizard__afm_regist_date
+msgid "Registration Date"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model:ir.model,name:l10n_gr_afm.model_l10n_gr_afm_lookup_wizard
+msgid "AADE AFM Lookup Preview"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "Please enter a VAT number before fetching from AADE."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "AADE lookup is only available for Greek VAT numbers."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "Please configure AADE credentials in Accounting Settings."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "Could not connect to AADE. Please try again later."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "AADE authentication failed. Please check your credentials in Settings."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "AADE service is temporarily unavailable. Please try again later."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "Unexpected response from AADE. Please contact support."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "AADE returned error: %s"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "You do not have permission to perform AADE lookups."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#, python-format
+msgid "AADE AFM lookup performed."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.l10n_gr_afm_lookup_wizard_view_form
+msgid "Warning:"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.l10n_gr_afm_lookup_wizard_view_form
+msgid "This VAT number is inactive (deactivated)."
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.l10n_gr_afm_lookup_wizard_view_form
+msgid "Company Details"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.l10n_gr_afm_lookup_wizard_view_form
+msgid "Address"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.l10n_gr_afm_lookup_wizard_view_form
+msgid "Tax Registry"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.l10n_gr_afm_lookup_wizard_view_form
+msgid "Main Activity"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.l10n_gr_afm_lookup_wizard_view_form
+msgid "Apply"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.l10n_gr_afm_lookup_wizard_view_form
+msgid "Cancel"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: code:addons/l10n_gr_afm/models/res_partner.py:0
+#: model:ir.actions.act_window,name:l10n_gr_afm.l10n_gr_afm_lookup_wizard_action
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.l10n_gr_afm_lookup_wizard_view_form
+#, python-format
+msgid "AADE Lookup Result"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.res_config_settings_form_inherit_l10n_gr_afm
+msgid "AADE AFM Lookup"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.res_config_settings_form_inherit_l10n_gr_afm
+msgid "AADE Credentials"
+msgstr ""
+
+#. module: l10n_gr_afm
+#: model_terms:ir.ui.view,arch_db:l10n_gr_afm.res_config_settings_form_inherit_l10n_gr_afm
+msgid "Enter your special AADE access codes to look up business registry data. These are NOT your regular TAXISnet credentials — obtain them from https://www1.aade.gr/sgsisapps/tokenservices/protected/displayConsole.htm"
+msgstr ""

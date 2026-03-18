@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Vlassis Emmanouil
+     License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl). -->
+<odoo>
+
+    <record id="res_config_settings_form_inherit_l10n_gr_afm" model="ir.ui.view">
+        <field name="name">res.config.settings.form.inherit.l10n_gr_afm</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="account.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//block[@id='invoicing_settings']" position="after">
+                <block id="l10n_gr_afm_settings"
+                       title="AADE AFM Lookup"
+                       invisible="country_code != 'GR'">
+
+                    <setting id="l10n_gr_afm_aade_credentials"
+                             company_dependent="1"
+                             help="Enter your special AADE access codes to look up business registry data. These are NOT your regular TAXISnet credentials — obtain them from https://www1.aade.gr/sgsisapps/tokenservices/protected/displayConsole.htm"
+                             string="AADE Credentials">
+                        <div class="row">
+                            <label class="col-lg-6 o_light_label" for="l10n_gr_afm_aade_username"/>
+                            <field name="l10n_gr_afm_aade_username"/>
+                        </div>
+                        <div class="row">
+                            <label class="col-lg-6 o_light_label" for="l10n_gr_afm_aade_password"/>
+                            <field name="l10n_gr_afm_aade_password" password="True"/>
+                        </div>
+                    </setting>
+
+                </block>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

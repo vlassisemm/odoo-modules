@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Vlassis Emmanouil
+     License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl). -->
+<odoo>
+
+    <record id="view_partner_form_inherit_l10n_gr_afm" model="ir.ui.view">
+        <field name="name">res.partner.form.inherit.l10n_gr_afm</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <field name="vat" position="after">
+                <field name="l10n_gr_afm_can_fetch" invisible="1"/>
+                <button name="action_l10n_gr_afm_fetch"
+                        type="object"
+                        string="Fetch from AADE"
+                        class="btn-link"
+                        groups="sales_team.group_sale_salesman,account.group_account_invoice"
+                        invisible="not l10n_gr_afm_can_fetch"/>
+                <field name="l10n_gr_afm_doy" invisible="country_code != 'GR'"/>
+                <field name="l10n_gr_afm_kad_descr" invisible="country_code != 'GR'"/>
+            </field>
+        </field>
+    </record>
+
+</odoo>
