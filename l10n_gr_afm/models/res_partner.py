@@ -50,7 +50,7 @@ class ResPartner(models.Model):
             if not self.country_id:
                 self.country_id = self.env.ref('base.gr')
             if not self.name:
-                self.name = self.vat
+                self.name = "/"
 
     def _auto_init(self):
         for col, col_type in [

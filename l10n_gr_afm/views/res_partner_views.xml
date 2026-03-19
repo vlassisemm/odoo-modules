@@ -8,7 +8,7 @@
         <field name="model">res.partner</field>
         <field name="inherit_id" ref="base.view_partner_form"/>
         <field name="arch" type="xml">
-            <field name="vat" position="after">
+            <xpath expr="//div[@name='vat_vies_container']" position="after">
                 <field name="l10n_gr_afm_can_fetch" invisible="1"/>
                 <button name="action_l10n_gr_afm_fetch"
                         type="object"
@@ -18,7 +18,7 @@
                         invisible="not l10n_gr_afm_can_fetch"/>
                 <field name="l10n_gr_afm_doy" invisible="country_code != 'GR'"/>
                 <field name="l10n_gr_afm_kad_descr" invisible="country_code != 'GR'"/>
-            </field>
+            </xpath>
         </field>
     </record>
 
