@@ -8,16 +8,20 @@
         <field name="model">res.partner</field>
         <field name="inherit_id" ref="base.view_partner_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//div[@name='vat_vies_container']" position="after">
+            <xpath expr="//div[@name='vat_vies_container']" position="inside">
                 <field name="l10n_gr_afm_can_fetch" invisible="1"/>
                 <button name="action_l10n_gr_afm_fetch"
                         type="object"
                         string="Fetch from AADE"
-                        class="btn-link"
+                        class="btn btn-primary"
                         groups="sales_team.group_sale_salesman,account.group_account_invoice"
                         invisible="not l10n_gr_afm_can_fetch"/>
-                <field name="l10n_gr_afm_doy" invisible="country_code != 'GR'"/>
-                <field name="l10n_gr_afm_kad_descr" invisible="country_code != 'GR'"/>
+            </xpath>
+            <xpath expr="//div[@name='vat_vies_container']" position="after">
+                <label for="l10n_gr_afm_doy" invisible="country_code != 'GR'"/>
+                <field name="l10n_gr_afm_doy" nolabel="1" invisible="country_code != 'GR'"/>
+                <label for="l10n_gr_afm_kad_descr" invisible="country_code != 'GR'"/>
+                <field name="l10n_gr_afm_kad_descr" nolabel="1" invisible="country_code != 'GR'"/>
             </xpath>
         </field>
     </record>
