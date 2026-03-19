@@ -227,7 +227,7 @@ class AccountMove(models.Model):
     def _l10n_gr_edi_create_error_document(self, values: dict):
         """
         Creates ``l10n_gr_edi.document`` of state ``invoice_error`` or ``bill_error``.
-        :param values: dictionary in the format of: {'error': <str>, 'xml_content': <optional/str>}
+        :param values: dictionary in the format of: {'error': <str>, 'xml_content': <optional/bytes>}
         """
         self.ensure_one()
         document = self.env['l10n_gr_edi.document'].create({
@@ -254,7 +254,7 @@ class AccountMove(models.Model):
             'mydata_mark': <str>,
             'mydata_cls_mark': <optional/str>,
             'mydata_url': <str>,
-            'xml_content': <str>,
+            'xml_content': <bytes>,
         }
         """
         self.ensure_one()
@@ -282,7 +282,7 @@ class AccountMove(models.Model):
     @api.model
     def _l10n_gr_edi_generate_xml_content(self, xml_template, xml_vals):
         xml_content = self.env['ir.qweb']._render(xml_template, xml_vals)
-        return etree.tostring(element_or_tree=cleanup_xml_node(xml_content), encoding='ISO-8859-7', standalone='yes')
+        return etree.tostring(element_or_tree=cleanup_xml_node(xml_content), encoding='UTF-8', standalone='yes')
 
     def _l10n_gr_edi_eligible_for_mydata(self):
         """Shorthand for getting the eligibility of the current move to send to myDATA."""
@@ -366,9 +366,9 @@ class AccountMove(models.Model):
 
         if issuer_not_from_greece:
             values.update({
-                'issuer_name': self.company_id.name.encode('ISO-8859-7'),
+                'issuer_name': self.company_id.name,
                 'issuer_postal_code': self.company_id.zip,
-                'issuer_city': (self.company_id.city or "").encode('ISO-8859-7') or None,
+                'issuer_city': self.company_id.city or None,
             })
 
         if inv_type_allows_counterpart:
@@ -378,12 +378,12 @@ class AccountMove(models.Model):
                 'counterpart_branch': (self.commercial_partner_id.l10n_gr_edi_branch_number or 0),
             })
             if partner_not_from_greece:
-                values['counterpart_name'] = self.commercial_partner_id.name.encode('ISO-8859-7')
+                values['counterpart_name'] = self.commercial_partner_id.name
 
         if inv_type_require_counterpart or (inv_type_allows_counterpart and partner_not_from_greece):
             values.update({
                 'counterpart_postal_code': self.commercial_partner_id.zip,
-                'counterpart_city': (self.commercial_partner_id.city or "").encode('ISO-8859-7') or None,
+                'counterpart_city': self.commercial_partner_id.city or None,
             })
 
     def _l10n_gr_edi_add_payment_method_vals(self, values):
@@ -421,7 +421,7 @@ class AccountMove(models.Model):
         :rtype: dict[str, list[dict]]
         """
         line = base_line['record']
-        net_amount = base_line['tax_details']['raw_total_excluded']
+        net_amount = round(base_line['tax_details']['total_excluded'] + base_line['tax_details']['delta_total_excluded'], 2)
         cls_vals = {'ecls': [], 'icls': []}
 
         if line.l10n_gr_edi_cls_category:
@@ -493,7 +493,7 @@ class AccountMove(models.Model):
                 {
                     'category': category,
                     'type': cls_type,
-                    'amount': total_amount,
+                    'amount': round(total_amount, 2),
                 }
                 for (category, cls_type), total_amount in cls_vals.items()
             ]
@@ -525,8 +525,8 @@ class AccountMove(models.Model):
                     'line_number': line_no,
                     'quantity': line.quantity if move.l10n_gr_edi_inv_type not in TYPES_WITH_FORBIDDEN_QUANTITY else '',
                     'detail_type': line.l10n_gr_edi_detail_type or '',
-                    'net_value': base_line['tax_details']['raw_total_excluded'],
-                    'vat_amount': sum(tax_data['tax_amount'] for tax_data in base_line['tax_details']['taxes_data']),
+                    'net_value': round(base_line['tax_details']['total_excluded'] + base_line['tax_details']['delta_total_excluded'], 2),
+                    'vat_amount': round(sum(tax_data['tax_amount'] for tax_data in base_line['tax_details']['taxes_data']), 2),
                     'vat_category': vat_category,
                     'vat_exemption_category': vat_exemption_category,
                     **self._l10n_gr_edi_common_base_line_details_values(base_line),

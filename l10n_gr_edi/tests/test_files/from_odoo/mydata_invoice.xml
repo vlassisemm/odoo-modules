@@ -1,3 +1,4 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes'?>
 <InvoicesDoc xmlns:icls="https://www.aade.gr/myDATA/incomeClassificaton/v1.0" xmlns="http://www.aade.gr/myDATA/invoice/v1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ecls="https://www.aade.gr/myDATA/expensesClassificaton/v1.0" xsi:schemaLocation="http://www.aade.gr/myDATA/invoice/v1.0/InvoicesDoc-v0.6.xsd">
     <invoice>
         <issuer>

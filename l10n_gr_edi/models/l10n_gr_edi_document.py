@@ -16,7 +16,7 @@ def _make_mydata_request(company, endpoint, xml_content) -> dict[str, str] | dic
     :param str endpoint: 'SendInvoices' (for sending invoice) |
                          'SendExpensesClassification' (for sending vendor bill's expense classification) |
                          'RequestDocs' (for fetching third-party-issued invoices (for creating vendor bills))
-    :param str xml_content: xml content to send to myDATA
+    :param bytes xml_content: xml content to send to myDATA
     :return: dict[str, str]            error_object    {'error': <str>} |
              dict[int, dict[str, str]] response_object {
                  idx<int>:
@@ -38,6 +38,7 @@ def _make_mydata_request(company, endpoint, xml_content) -> dict[str, str] | dic
             data=xml_content,
             timeout=10,
             headers={
+                'Content-Type': 'application/xml; charset=UTF-8',
                 'aade-user-id': company.l10n_gr_edi_aade_id,
                 'ocp-apim-subscription-key': company.l10n_gr_edi_aade_key,
             },
