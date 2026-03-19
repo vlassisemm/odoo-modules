@@ -7,6 +7,7 @@ Custom Odoo modules for Greek localization and business workflows.
 | Module | Version | Summary |
 |--------|---------|---------|
 | [`l10n_gr_afm`](l10n_gr_afm/) | 19.0.1.0.0 | Fetch business registry data from AADE using Greek VAT numbers |
+| [`l10n_gr_edi`](l10n_gr_edi/) | 1.0 | Greece myDATA integration (official addon with UTF-8 and rounding fixes) |
 
 ## Installation
 
@@ -20,7 +21,7 @@ Add the path to your Odoo configuration:
 
 ```ini
 [options]
-addons_path = /path/to/odoo/addons,/path/to/odoo-modules
+addons_path = /path/to/odoo-modules,/path/to/odoo/addons
 ```
 
 Then install modules from **Settings > Apps** or via command line:
