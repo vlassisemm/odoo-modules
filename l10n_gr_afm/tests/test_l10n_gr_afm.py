@@ -357,3 +357,109 @@ class TestL10nGrAfmAccessControl(TransactionCase):
             partner_as_basic.action_l10n_gr_afm_fetch()
         # Verify AADE was never called
         mock_post.assert_not_called()
+
+
+@tagged('post_install', '-at_install', 'l10n_gr_afm')
+class TestL10nGrAfmMultiCompany(TransactionCase):
+    """Test multi-company credential isolation and partner field sharing."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Company A: default company, with AADE credentials
+        cls.company_a = cls.env.company
+        cls.company_a.sudo().write({
+            'l10n_gr_afm_aade_username': 'user_a',
+            'l10n_gr_afm_aade_password': 'pass_a',
+            'country_id': cls.env.ref('base.gr').id,
+        })
+
+        # Company B: no AADE credentials
+        cls.company_b = cls.env['res.company'].create({
+            'name': 'Company B',
+            'country_id': cls.env.ref('base.gr').id,
+        })
+
+        # User assigned to Company B with sales group (passes permission check)
+        cls.user_b = cls.env['res.users'].create({
+            'name': 'User B',
+            'login': 'user_b_multicompany_test',
+            'company_id': cls.company_b.id,
+            'company_ids': [(6, 0, [cls.company_b.id])],
+            'groups_id': [(6, 0, [
+                cls.env.ref('base.group_user').id,
+                cls.env.ref('sales_team.group_sale_salesman').id,
+            ])],
+        })
+
+        # Shared partner (no company_id, visible to all companies)
+        cls.partner = cls.env['res.partner'].create({
+            'name': 'Shared Partner',
+            'vat': 'EL090165560',
+            'country_id': cls.env.ref('base.gr').id,
+        })
+
+    @patch('odoo.addons.l10n_gr_afm.models.res_partner.http_requests.post')
+    def test_credential_isolation_company_a_succeeds(self, mock_post):
+        """Fetch from Company A (has credentials) succeeds and returns wizard."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = SAMPLE_RESPONSE_OK
+        mock_post.return_value = mock_response
+
+        action = self.partner.action_l10n_gr_afm_fetch()
+        self.assertEqual(action['res_model'], 'l10n_gr_afm.lookup.wizard')
+        wizard = self.env['l10n_gr_afm.lookup.wizard'].browse(action['res_id'])
+        self.assertEqual(wizard.afm_name, 'TEST COMPANY IKE')
+
+    @patch('odoo.addons.l10n_gr_afm.models.res_partner.http_requests.post')
+    def test_credential_isolation_company_b_raises(self, mock_post):
+        """Fetch from Company B (no credentials) raises UserError before calling AADE."""
+        partner_b = self.partner.with_user(self.user_b).with_company(self.company_b)
+        with self.assertRaisesRegex(UserError, 'credentials'):
+            partner_b.action_l10n_gr_afm_fetch()
+        mock_post.assert_not_called()
+
+    def test_partner_fields_shared_across_companies(self):
+        """AADE fields written by Company A are visible from Company B."""
+        self.partner.write({
+            'l10n_gr_afm_doy': '1104',
+            'l10n_gr_afm_kad_descr': 'RETAIL TRADE',
+        })
+        partner_b = self.partner.with_user(self.user_b).with_company(self.company_b)
+        self.assertEqual(partner_b.l10n_gr_afm_doy, '1104')
+        self.assertEqual(partner_b.l10n_gr_afm_kad_descr, 'RETAIL TRADE')
+
+    def test_can_fetch_no_company_id_on_partner(self):
+        """can_fetch works when partner has no company_id (OCA partner_multi_company compat)."""
+        self.assertFalse(self.partner.company_id)
+        self.assertTrue(self.partner.l10n_gr_afm_can_fetch)
+
+    @patch('odoo.addons.l10n_gr_afm.models.res_partner.http_requests.post')
+    def test_company_b_uses_own_credentials(self, mock_post):
+        """When Company B has credentials, its credentials appear in the SOAP envelope."""
+        self.company_b.sudo().write({
+            'l10n_gr_afm_aade_username': 'user_b',
+            'l10n_gr_afm_aade_password': 'pass_b',
+        })
+        self.addCleanup(
+            self.company_b.sudo().write,
+            {'l10n_gr_afm_aade_username': False,
+             'l10n_gr_afm_aade_password': False},
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = SAMPLE_RESPONSE_OK
+        mock_post.return_value = mock_response
+
+        partner_b = self.partner.with_user(self.user_b).with_company(self.company_b)
+        partner_b.action_l10n_gr_afm_fetch()
+
+        # Verify the SOAP envelope contains Company B's credentials
+        call_kwargs = mock_post.call_args
+        soap_body = call_kwargs.kwargs.get('data') or call_kwargs[1].get('data')
+        self.assertIn(b'user_b', soap_body)
+        self.assertIn(b'pass_b', soap_body)
+        self.assertNotIn(b'user_a', soap_body)
+        self.assertNotIn(b'pass_a', soap_body)
