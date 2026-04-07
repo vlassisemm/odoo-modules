@@ -4,10 +4,25 @@ Custom Odoo modules for Greek localization and business workflows.
 
 ## Modules
 
-| Module | Version | Summary |
-|--------|---------|---------|
-| [`l10n_gr_afm`](l10n_gr_afm/) | 19.0.1.0.0 | Fetch business registry data from AADE using Greek VAT numbers |
-| [`l10n_gr_edi`](l10n_gr_edi/) | 1.0 | Greece myDATA integration (official addon with UTF-8 and rounding fixes) |
+### [`l10n_gr_afm`](l10n_gr_afm/) — Greece AFM Lookup (v19.0.1.0.0)
+
+Fetch business registry data from AADE (Independent Authority for Public Revenue) using a partner's Greek VAT number (AFM).
+
+- **"Fetch from AADE"** button on partner contacts with a Greek VAT
+- Preview wizard to review fetched data before applying changes
+- Populates name, address, Tax Office (DOY), and primary activity code (KAD)
+- Multi-company support with per-company AADE credentials
+- Chatter audit trail (optional, when `mail` is installed)
+- Access restricted to Sales and Accounting users
+
+### [`l10n_gr_edi`](l10n_gr_edi/) — Greece myDATA (v1.0, patched)
+
+Patched version of the official Odoo `l10n_gr_edi` module for Greece's myDATA e-invoicing platform. Fixes applied on top of the official code:
+
+- **UTF-8 encoding** — official module uses ISO-8859-7, which breaks on non-Greek characters
+- **Floating-point rounding** — wraps `net_value`, `vat_amount`, and classification `amount` with `round(..., 2)`
+
+> **Note:** This module must override the built-in `l10n_gr_edi`. Place this repository's addons path **before** the official Odoo addons path so it takes priority.
 
 ## Installation
 
@@ -17,7 +32,7 @@ Clone this repository into your Odoo addons path:
 git clone https://github.com/vlassisemm/odoo-modules.git
 ```
 
-Add the path to your Odoo configuration:
+Add the path to your Odoo configuration. List this path **before** the official Odoo addons directory (required for `l10n_gr_edi` to override the built-in version):
 
 ```ini
 [options]
