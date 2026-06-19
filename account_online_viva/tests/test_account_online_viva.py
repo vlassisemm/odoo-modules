@@ -339,3 +339,6 @@ class TestVivaCron(VivaCommon):
         self.assertTrue(self.env['account.bank.statement.line'].search_count([
             ('journal_id', '=', self.journal.id), ('viva_transaction_id', '=', 'OK1')]))
         self.assertTrue(self.account2.last_error)
+        self.account.invalidate_recordset()
+        self.assertFalse(self.account.last_error)
+        self.assertTrue(self.account.last_successful_to)

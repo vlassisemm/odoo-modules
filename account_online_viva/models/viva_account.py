@@ -212,6 +212,6 @@ class VivaAccount(models.Model):
             except Exception as exc:  # noqa: BLE001 - isolate per account
                 _logger.exception('Viva cron failed for account %s', account.id)
                 account.sudo().last_error = str(exc)
-                account.message_post(
+                account.sudo().message_post(
                     body=_('Viva sync failed: %s', exc), subtype_xmlid='mail.mt_note')
                 self.env.cr.commit()
