@@ -407,3 +407,17 @@ class TestVivaSetupWizard(VivaCommon):
         wiz = self.env['viva.setup.wizard'].create({})
         with self.assertRaises(OdooUserError):
             wiz.action_discover()
+
+    def test_unique_journal_code_no_collision_for_shared_last4(self):
+        """Two wallet ids sharing last 4 chars must produce distinct journal codes."""
+        # wallet ids that produce the same base_code 'VABCD' via [-4:] slicing
+        wallet_a = {'wallet_id': 'XABCD', 'name': 'Wallet A'}
+        wallet_b = {'wallet_id': 'YABCD', 'name': 'Wallet B'}
+        wiz = self.env['viva.setup.wizard'].create({})
+        no_currency = self.env['account.journal'].browse()
+        journal_a = wiz._create_bank_journal(wallet_a, no_currency)
+        journal_b = wiz._create_bank_journal(wallet_b, no_currency)
+        self.assertNotEqual(
+            journal_a.code, journal_b.code,
+            'Journals created from wallets sharing last 4 chars must have distinct codes'
+        )

@@ -1,5 +1,7 @@
 # Copyright 2026 Vlassis Emmanouil
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
+import hashlib
+
 from odoo import _, fields, models
 from odoo.exceptions import UserError
 
@@ -66,13 +68,16 @@ class VivaSetupWizard(models.TransientModel):
                 [('code', '=', code), ('company_id', '=', company_id)]):
             return code
         # Append numeric suffix until unique; keep within Odoo's 5-char limit.
+        # Trim base to make room for each suffix so candidates are genuinely distinct.
         for suffix in range(1, 100):
-            candidate = ('%s%s' % (base_code[:4], suffix))[:5].upper()
+            suffix_str = str(suffix)
+            candidate = (base_code[:5 - len(suffix_str)] + suffix_str).upper()
             if not Journal.search_count(
                     [('code', '=', candidate), ('company_id', '=', company_id)]):
                 return candidate
-        # Fallback: truncated wallet_id hash (should never be reached in practice)
-        return ('V%04d' % (hash(base_code) % 10000))
+        # Fallback: stable md5-derived hash (should never be reached in practice)
+        digest = int(hashlib.md5(base_code.encode()).hexdigest()[:4], 16) % 10000
+        return ('V%04d' % digest)
 
     def _create_bank_journal(self, wallet, currency):
         company = self.company_id.sudo()
