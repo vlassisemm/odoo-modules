@@ -1,0 +1,517 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* account_online_viva
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 19.0+e\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-06-19 10:48+0000\n"
+"PO-Revision-Date: 2026-06-19 10:48+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: \n"
+"Plural-Forms: \n"
+
+#. module: account_online_viva
+#: model:ir.model.constraint,message:account_online_viva.constraint_viva_account_journal_uniq
+msgid "A Viva account already exists for this journal."
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "A sync for this Viva account is already running."
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_needaction
+msgid "Action Needed"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__active
+msgid "Active"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__activity_ids
+msgid "Activities"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__activity_exception_decoration
+msgid "Activity Exception Decoration"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__activity_state
+msgid "Activity State"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__activity_type_icon
+msgid "Activity Type Icon"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_attachment_count
+msgid "Attachment Count"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model,name:account_online_viva.model_account_bank_statement_line
+msgid "Bank Statement Line"
+msgstr ""
+
+#. module: account_online_viva
+#: model_terms:ir.ui.view,arch_db:account_online_viva.viva_fetch_wizard_form
+#: model_terms:ir.ui.view,arch_db:account_online_viva.viva_setup_wizard_form
+msgid "Cancel"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model,name:account_online_viva.model_res_company
+msgid "Companies"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__company_id
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_setup_wizard__company_id
+msgid "Company"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model,name:account_online_viva.model_res_config_settings
+msgid "Config Settings"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/wizard/viva_setup_wizard.py:0
+msgid "Could not connect to Viva: %s"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__create_uid
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__create_uid
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_setup_wizard__create_uid
+msgid "Created by"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__create_date
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__create_date
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_setup_wizard__create_date
+msgid "Created on"
+msgstr ""
+
+#. module: account_online_viva
+#: model_terms:ir.ui.view,arch_db:account_online_viva.res_config_settings_view_form_viva
+msgid "Credentials for importing Viva business-account transactions"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__currency_id
+msgid "Currency"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__date_from
+msgid "Date From"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__date_to
+msgid "Date To"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields.selection,name:account_online_viva.selection__res_company__viva_environment__demo
+msgid "Demo"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_account_bank_statement_line__display_name
+#: model:ir.model.fields,field_description:account_online_viva.field_account_journal__display_name
+#: model:ir.model.fields,field_description:account_online_viva.field_res_company__display_name
+#: model:ir.model.fields,field_description:account_online_viva.field_res_config_settings__display_name
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__display_name
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__display_name
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_setup_wizard__display_name
+msgid "Display Name"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__sync_start_date
+msgid "Earliest date to import; transactions before this are ignored."
+msgstr ""
+
+#. module: account_online_viva
+#: model_terms:ir.ui.view,arch_db:account_online_viva.viva_fetch_wizard_form
+msgid "Fetch"
+msgstr ""
+
+#. module: account_online_viva
+#: model_terms:ir.ui.view,arch_db:account_online_viva.viva_fetch_wizard_form
+msgid "Fetch Viva Transactions"
+msgstr ""
+
+#. module: account_online_viva
+#: model_terms:ir.ui.view,arch_db:account_online_viva.viva_account_view_form
+msgid "Fetch now"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_follower_ids
+msgid "Followers"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_partner_ids
+msgid "Followers (Partners)"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__activity_type_icon
+msgid "Font awesome icon e.g. fa-tasks"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__has_message
+msgid "Has Message"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_account_bank_statement_line__id
+#: model:ir.model.fields,field_description:account_online_viva.field_account_journal__id
+#: model:ir.model.fields,field_description:account_online_viva.field_res_company__id
+#: model:ir.model.fields,field_description:account_online_viva.field_res_config_settings__id
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__id
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__id
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_setup_wizard__id
+msgid "ID"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__iban
+msgid "Iban"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__activity_exception_icon
+msgid "Icon"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__activity_exception_icon
+msgid "Icon to indicate an exception activity."
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__message_needaction
+msgid "If checked, new messages require your attention."
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__message_has_error
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__message_has_sms_error
+msgid "If checked, some messages have a delivery error."
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_is_follower
+msgid "Is Follower"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model,name:account_online_viva.model_account_journal
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__journal_id
+msgid "Journal"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__last_error
+msgid "Last Error"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__last_successful_to
+msgid "Last Successful To"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__write_uid
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__write_uid
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_setup_wizard__write_uid
+msgid "Last Updated by"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__write_date
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__write_date
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_setup_wizard__write_date
+msgid "Last Updated on"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_has_error
+msgid "Message Delivery error"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_ids
+msgid "Messages"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__my_activity_date_deadline
+msgid "My Activity Deadline"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__name
+msgid "Name"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__activity_date_deadline
+msgid "Next Activity Deadline"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__activity_summary
+msgid "Next Activity Summary"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__activity_type_id
+msgid "Next Activity Type"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_needaction_counter
+msgid "Number of Actions"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_has_error_counter
+msgid "Number of errors"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__message_needaction_counter
+msgid "Number of messages requiring action"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__message_has_error_counter
+msgid "Number of messages with delivery error"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/wizard/viva_setup_wizard.py:0
+msgid "Only accounting managers can configure Viva."
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields.selection,name:account_online_viva.selection__res_company__viva_environment__production
+msgid "Production"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__activity_user_id
+msgid "Responsible User"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__message_has_sms_error
+msgid "SMS Delivery error"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/wizard/viva_setup_wizard.py:0
+msgid "Set the Viva Client ID and Secret first (Settings)."
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__activity_state
+msgid ""
+"Status based on activities\n"
+"Overdue: Due date is already passed\n"
+"Today: Activity date is today\n"
+"Planned: Future activities."
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__sync_start_date
+msgid "Sync Start Date"
+msgstr ""
+
+#. module: account_online_viva
+#: model_terms:ir.ui.view,arch_db:account_online_viva.viva_setup_wizard_form
+msgid "Test & Discover Wallets"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__activity_exception_decoration
+msgid "Type of the exception activity on record."
+msgstr ""
+
+#. module: account_online_viva
+#: model_terms:ir.ui.view,arch_db:account_online_viva.viva_setup_wizard_form
+msgid ""
+"Validate your Viva credentials and import the available wallets as bank "
+"journals."
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Viva %(t)s/%(s)s"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/wizard/viva_setup_wizard.py:0
+msgid "Viva %s"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_account_journal__viva_account_id
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__viva_account_id
+msgid "Viva Account"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/wizard/viva_setup_wizard.py:0
+#: model:ir.actions.act_window,name:account_online_viva.viva_account_action
+#: model:ir.ui.menu,name:account_online_viva.viva_account_menu
+msgid "Viva Accounts"
+msgstr ""
+
+#. module: account_online_viva
+#: model_terms:ir.ui.view,arch_db:account_online_viva.res_config_settings_view_form_viva
+msgid "Viva Bank Connector"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_res_company__viva_client_id
+#: model:ir.model.fields,field_description:account_online_viva.field_res_config_settings__viva_client_id
+msgid "Viva Client ID"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_res_company__viva_client_secret
+#: model:ir.model.fields,field_description:account_online_viva.field_res_config_settings__viva_client_secret
+msgid "Viva Client Secret"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_res_company__viva_environment
+#: model:ir.model.fields,field_description:account_online_viva.field_res_config_settings__viva_environment
+msgid "Viva Environment"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model,name:account_online_viva.model_viva_fetch_wizard
+msgid "Viva Manual Fetch"
+msgstr ""
+
+#. module: account_online_viva
+#: model_terms:ir.ui.view,arch_db:account_online_viva.viva_setup_wizard_form
+msgid "Viva Setup"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model,name:account_online_viva.model_viva_setup_wizard
+msgid "Viva Setup / Wallet Discovery"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_account_bank_statement_line__viva_transaction_id
+msgid "Viva Transaction ID"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Viva Transactions"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model,name:account_online_viva.model_viva_account
+msgid "Viva Wallet Connection"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__wallet_id
+msgid "Viva WalletId polled for transactions"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Viva sync failed: %s"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Viva sync: imported %(n)s transaction(s) (%(f)s → %(t)s)."
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Viva transaction"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/account_journal.py:0
+msgid "Viva.com"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.actions.act_window,name:account_online_viva.viva_setup_wizard_action
+#: model:ir.ui.menu,name:account_online_viva.viva_setup_menu
+msgid "Viva: Discover Wallets"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.actions.server,name:account_online_viva.ir_cron_viva_fetch_ir_actions_server
+msgid "Viva: fetch bank transactions"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__wallet_id
+msgid "Wallet"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__website_message_ids
+msgid "Website Messages"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,help:account_online_viva.field_viva_account__website_message_ids
+msgid "Website communication history"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "You are not allowed to fetch Viva transactions."
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "journal_id"
+msgstr ""
