@@ -177,3 +177,32 @@ class TestJournalSource(VivaCommon):
 
     def test_viva_account_id_computed(self):
         self.assertEqual(self.journal.viva_account_id, self.account)
+
+
+class TestVivaMapping(VivaCommon):
+    def test_currency_numeric_and_alpha(self):
+        eur = self.env.ref('base.EUR')
+        self.assertEqual(self.account._viva_currency_from_code(978), eur)
+        self.assertEqual(self.account._viva_currency_from_code('978'), eur)
+        self.assertEqual(self.account._viva_currency_from_code('EUR'), eur)
+        self.assertFalse(self.account._viva_currency_from_code('ZZZ'))
+
+    def test_map_transaction(self):
+        raw = {'accountTransactionId': 'T7', 'amount': -12.345,
+               'valueDate': '2026-02-03T10:00:00', 'counterPart': 'ACME',
+               'currencyCode': 978, 'typeId': 5, 'subTypeId': 9}
+        m = self.account._viva_map_transaction(raw)
+        self.assertEqual(m['viva_transaction_id'], 'T7')
+        self.assertEqual(m['amount'], -12.35)
+        self.assertEqual(str(m['date']), '2026-02-03')
+        self.assertEqual(m['partner_name'], 'ACME')
+        self.assertIn('ACME', m['payment_ref'])
+        self.assertEqual(m['transaction_details'], raw)
+
+    def test_filter_new_drops_existing(self):
+        self.env['account.bank.statement.line'].create({
+            'journal_id': self.journal.id, 'amount': 1.0,
+            'payment_ref': 'x', 'viva_transaction_id': 'EXIST'})
+        mapped = [{'viva_transaction_id': 'EXIST'}, {'viva_transaction_id': 'NEW'}]
+        out = self.account._viva_filter_new(mapped)
+        self.assertEqual([m['viva_transaction_id'] for m in out], ['NEW'])
