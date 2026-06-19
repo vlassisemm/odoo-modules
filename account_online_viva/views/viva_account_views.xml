@@ -25,6 +25,10 @@
                     <button name="action_viva_fetch_now" type="object"
                             string="Fetch now" class="btn-primary"
                             groups="account.group_account_user"/>
+                    <button name="%(viva_fetch_wizard_action)d" type="action"
+                            string="Fetch (date range)"
+                            groups="account.group_account_user"
+                            context="{'default_viva_account_id': id}"/>
                 </header>
                 <sheet>
                     <group>

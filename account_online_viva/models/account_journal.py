@@ -7,7 +7,8 @@ class AccountJournal(models.Model):
     _inherit = 'account.journal'
 
     viva_account_id = fields.Many2one(
-        'viva.account', compute='_compute_viva_account_id', string='Viva Account')
+        'viva.account', compute='_compute_viva_account_id', string='Viva Account',
+        compute_sudo=True)
 
     def _compute_viva_account_id(self):
         accounts = self.env['viva.account'].search([('journal_id', 'in', self.ids)])

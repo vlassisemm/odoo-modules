@@ -2,6 +2,13 @@
 <!-- Copyright 2026 Vlassis Emmanouil -->
 <!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl). -->
 <odoo>
+    <record id="viva_fetch_wizard_action" model="ir.actions.act_window">
+        <field name="name">Fetch Viva Transactions</field>
+        <field name="res_model">viva.fetch.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
     <record id="viva_fetch_wizard_form" model="ir.ui.view">
         <field name="name">viva.fetch.wizard.form</field>
         <field name="model">viva.fetch.wizard</field>
