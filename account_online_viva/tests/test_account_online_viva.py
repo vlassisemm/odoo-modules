@@ -92,8 +92,6 @@ class TestVivaClient(TransactionCase):
         self.assertEqual(body['DateTo'], '2026-01-31')
 
 
-from odoo.exceptions import AccessError
-
 
 class VivaCommon(TransactionCase):
     @classmethod
