@@ -137,3 +137,34 @@ class TestVivaAccountMultiCompany(VivaCommon):
             'group_ids': [(4, self.env.ref('account.group_account_user').id)]})
         visible = self.env['viva.account'].with_user(user).search([])
         self.assertNotIn(other_acc.id, visible.ids)
+
+
+from psycopg2 import IntegrityError
+from odoo.tools import mute_logger
+
+
+class TestStatementLineDedup(VivaCommon):
+    def _line(self, viva_id):
+        return self.env['account.bank.statement.line'].create({
+            'journal_id': self.journal.id, 'amount': 1.0,
+            'payment_ref': 'x', 'viva_transaction_id': viva_id})
+
+    def test_field_exists(self):
+        line = self._line('T1')
+        self.assertEqual(line.viva_transaction_id, 'T1')
+
+    @mute_logger('odoo.sql_db')
+    def test_duplicate_viva_id_rejected(self):
+        self._line('T1')
+        self.env.flush_all()
+        with self.assertRaises(IntegrityError):
+            self._line('T1')
+            self.env.flush_all()
+
+    def test_null_viva_id_allowed_multiple(self):
+        a = self.env['account.bank.statement.line'].create({
+            'journal_id': self.journal.id, 'amount': 1.0, 'payment_ref': 'a'})
+        b = self.env['account.bank.statement.line'].create({
+            'journal_id': self.journal.id, 'amount': 2.0, 'payment_ref': 'b'})
+        self.env.flush_all()
+        self.assertTrue(a.id and b.id)
