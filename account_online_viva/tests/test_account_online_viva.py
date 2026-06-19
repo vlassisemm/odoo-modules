@@ -98,6 +98,7 @@ class VivaCommon(TransactionCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.company = cls.env.company
+        cls.company.currency_id = cls.env.ref('base.EUR')
         cls.journal = cls.env['account.journal'].create({
             'name': 'Viva Bank', 'type': 'bank', 'code': 'VIVA1',
         })
@@ -212,3 +213,45 @@ class TestVivaMapping(VivaCommon):
         mapped = [{'viva_transaction_id': 'EXIST'}, {'viva_transaction_id': 'NEW'}]
         out = self.account._viva_filter_new(mapped)
         self.assertEqual([m['viva_transaction_id'] for m in out], ['NEW'])
+
+
+class TestVivaSync(VivaCommon):
+    def setUp(self):
+        super().setUp()
+        self.company.viva_client_id = 'cid'
+        self.company.sudo().viva_client_secret = 'sec'
+        self.account.sync_start_date = date(2026, 1, 1)
+
+    def _patch_client(self, txns):
+        client = MagicMock()
+        client.search_transactions.return_value = txns
+        return patch.object(type(self.account), '_viva_get_client', return_value=client)
+
+    def test_sync_creates_lines_and_sets_source(self):
+        txns = [{'accountTransactionId': 'A1', 'amount': -10.0,
+                 'valueDate': '2026-03-01', 'counterPart': 'X', 'currencyCode': 978}]
+        with self._patch_client(txns):
+            lines = self.account._viva_sync_one(
+                date_from=date(2026, 1, 1), date_to=date(2026, 3, 31))
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(self.journal.bank_statements_source, 'viva')
+        self.assertTrue(self.account.last_successful_to)
+
+    def test_sync_idempotent(self):
+        txns = [{'accountTransactionId': 'A1', 'amount': -10.0,
+                 'valueDate': '2026-03-01', 'counterPart': 'X', 'currencyCode': 978}]
+        with self._patch_client(txns):
+            self.account._viva_sync_one(date_from=date(2026, 1, 1), date_to=date(2026, 3, 31))
+            self.account._viva_sync_one(date_from=date(2026, 1, 1), date_to=date(2026, 3, 31))
+        count = self.env['account.bank.statement.line'].search_count([
+            ('journal_id', '=', self.journal.id), ('viva_transaction_id', '=', 'A1')])
+        self.assertEqual(count, 1)
+
+    def test_currency_mismatch_skipped(self):
+        txns = [{'accountTransactionId': 'A2', 'amount': -10.0,
+                 'valueDate': '2026-03-01', 'counterPart': 'X', 'currencyCode': 840}]
+        self.journal.currency_id = self.env.ref('base.EUR')
+        with self._patch_client(txns):
+            lines = self.account._viva_sync_one(
+                date_from=date(2026, 1, 1), date_to=date(2026, 3, 31))
+        self.assertEqual(len(lines), 0)

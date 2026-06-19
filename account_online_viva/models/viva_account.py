@@ -1,10 +1,18 @@
 # Copyright 2026 Vlassis Emmanouil
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
+import logging
+
 from dateutil.relativedelta import relativedelta
+from psycopg2 import IntegrityError, OperationalError
 
 from odoo import _, fields, models
+from odoo.exceptions import UserError
 
 from .viva_client import VivaClient
+
+_logger = logging.getLogger(__name__)
+BATCH = 100
+OVERLAP_DAYS = 7
 
 # ISO-4217 numeric -> alpha for currencies Viva commonly uses (verify/extend).
 ISO_NUMERIC_TO_ALPHA = {
@@ -108,3 +116,87 @@ class VivaAccount(models.Model):
             'viva_transaction_id': mapped['viva_transaction_id'],
             'transaction_details': mapped['transaction_details'],
         }
+
+    def _viva_lock(self):
+        self.ensure_one()
+        try:
+            self.env.cr.execute(
+                'SELECT id FROM viva_account WHERE id = %s FOR UPDATE NOWAIT', [self.id])
+        except OperationalError as exc:
+            raise UserError(_('A sync for this Viva account is already running.')) from exc
+
+    def _viva_create_lines(self, mapped_new):
+        self.ensure_one()
+        BSL = self.env['account.bank.statement.line']
+        vals_list = [self._viva_line_vals(m) for m in mapped_new]
+        created = BSL
+        for i in range(0, len(vals_list), BATCH):
+            chunk = vals_list[i:i + BATCH]
+            try:
+                with self.env.cr.savepoint():
+                    created |= BSL.create(chunk)
+            except IntegrityError:
+                # Concurrent insert created some ids; fall back per-line, skipping dups.
+                for vals in chunk:
+                    try:
+                        with self.env.cr.savepoint():
+                            created |= BSL.create(vals)
+                    except IntegrityError:
+                        continue
+        return created
+
+    def _viva_window(self, date_from, date_to):
+        self.ensure_one()
+        date_to = date_to or fields.Date.context_today(self)
+        if date_from is None:
+            if self.last_successful_to:
+                date_from = fields.Datetime.to_datetime(self.last_successful_to).date() \
+                    - relativedelta(days=OVERLAP_DAYS)
+            else:
+                date_from = self.sync_start_date or (date_to - relativedelta(days=90))
+        if self.sync_start_date:
+            date_from = max(date_from, self.sync_start_date)
+        return date_from, date_to
+
+    def _viva_sync_one(self, date_from=None, date_to=None):
+        self.ensure_one()
+        self._viva_lock()
+        company = self.company_id
+        journal_currency = self.journal_id.currency_id or company.currency_id
+        lock_date = max(
+            [d for d in (company.user_fiscalyear_lock_date, company.user_hard_lock_date) if d],
+            default=None)
+        date_from, date_to = self._viva_window(date_from, date_to)
+
+        client = self._viva_get_client()
+        raws = client.search_transactions(self.wallet_id, date_from, date_to)
+
+        kept = []
+        for raw in raws:
+            m = self._viva_map_transaction(raw)
+            if not m['viva_transaction_id'] or not m['date']:
+                continue
+            currency = self._viva_currency_from_code(m['currency_code'])
+            if currency != journal_currency:
+                _logger.info('Viva %s: skip txn %s (currency %s != %s)',
+                             self.id, m['viva_transaction_id'], m['currency_code'],
+                             journal_currency.name)
+                continue
+            if lock_date and m['date'] <= lock_date:
+                _logger.info('Viva %s: skip txn %s before lock date %s',
+                             self.id, m['viva_transaction_id'], lock_date)
+                continue
+            kept.append(m)
+
+        new = self._viva_filter_new(kept)
+        created = self._viva_create_lines(new)
+
+        if created and self.journal_id.bank_statements_source != 'viva':
+            self.journal_id.sudo().bank_statements_source = 'viva'
+        self.last_successful_to = fields.Datetime.now()
+        self.last_error = False
+        self.message_post(
+            body=_('Viva sync: imported %(n)s transaction(s) (%(f)s → %(t)s).',
+                   n=len(created), f=date_from, t=date_to),
+            subtype_xmlid='mail.mt_note')
+        return created
