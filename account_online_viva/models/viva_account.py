@@ -5,7 +5,7 @@ import logging
 from dateutil.relativedelta import relativedelta
 from psycopg2 import IntegrityError, OperationalError
 
-from odoo import _, fields, models
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
 from .viva_client import VivaClient
@@ -200,3 +200,18 @@ class VivaAccount(models.Model):
                    n=len(created), f=date_from, t=date_to),
             subtype_xmlid='mail.mt_note')
         return created
+
+    @api.model
+    def _cron_viva_fetch(self):
+        accounts = self.search([('journal_id', '!=', False)])
+        for account in accounts:
+            try:
+                with self.env.cr.savepoint():
+                    account._viva_sync_one()
+                self.env.cr.commit()
+            except Exception as exc:  # noqa: BLE001 - isolate per account
+                _logger.exception('Viva cron failed for account %s', account.id)
+                account.sudo().last_error = str(exc)
+                account.message_post(
+                    body=_('Viva sync failed: %s', exc), subtype_xmlid='mail.mt_note')
+                self.env.cr.commit()

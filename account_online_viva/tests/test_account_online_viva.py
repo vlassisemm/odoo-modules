@@ -255,3 +255,87 @@ class TestVivaSync(VivaCommon):
             lines = self.account._viva_sync_one(
                 date_from=date(2026, 1, 1), date_to=date(2026, 3, 31))
         self.assertEqual(len(lines), 0)
+
+
+class TestVivaWindow(VivaCommon):
+    """Direct tests of _viva_window incremental path."""
+
+    def setUp(self):
+        super().setUp()
+        self.company.viva_client_id = 'cid'
+        self.company.sudo().viva_client_secret = 'sec'
+        self.account.sync_start_date = date(2026, 1, 1)
+
+    def _make_client(self):
+        c = MagicMock()
+        c.search_transactions.return_value = []
+        return c
+
+    def test_incremental_uses_last_successful_to_minus_overlap(self):
+        from datetime import timedelta
+        from odoo import fields as odoo_fields
+        # Set last_successful_to to a known point; sync_start_date is much earlier
+        known_dt = date(2026, 4, 10)
+        self.account.last_successful_to = odoo_fields.Datetime.to_datetime(str(known_dt))
+
+        client = self._make_client()
+        with patch.object(type(self.account), '_viva_get_client', return_value=client):
+            self.account._viva_sync_one()
+
+        call_kwargs = client.search_transactions.call_args
+        date_from_used = call_kwargs[0][1] if call_kwargs[0] else call_kwargs[1]['date_from']
+        expected = known_dt - timedelta(days=7)
+        self.assertEqual(date_from_used, expected)
+
+    def test_incremental_clamped_to_sync_start_date(self):
+        from datetime import timedelta
+        from odoo import fields as odoo_fields
+        # last_successful_to - 7d would be before sync_start_date → must clamp to sync_start_date
+        # Set last_successful_to such that last_successful_to.date() - 7d < sync_start_date
+        self.account.sync_start_date = date(2026, 3, 1)
+        # last_successful_to = 2026-03-05, so overlap window = 2026-02-26 < sync_start_date
+        self.account.last_successful_to = odoo_fields.Datetime.to_datetime('2026-03-05 00:00:00')
+
+        client = self._make_client()
+        with patch.object(type(self.account), '_viva_get_client', return_value=client):
+            self.account._viva_sync_one()
+
+        call_kwargs = client.search_transactions.call_args
+        date_from_used = call_kwargs[0][1] if call_kwargs[0] else call_kwargs[1]['date_from']
+        self.assertEqual(date_from_used, date(2026, 3, 1))
+
+
+class TestVivaCron(VivaCommon):
+    def setUp(self):
+        super().setUp()
+        self.company.viva_client_id = 'cid'
+        self.company.sudo().viva_client_secret = 'sec'
+        self.journal2 = self.env['account.journal'].create({
+            'name': 'Viva Bank 2', 'type': 'bank', 'code': 'VIVA2'})
+        self.account2 = self.env['viva.account'].create({
+            'name': 'wallet 2', 'journal_id': self.journal2.id, 'wallet_id': 'W2',
+            'sync_start_date': date(2026, 1, 1)})
+        self.account.sync_start_date = date(2026, 1, 1)
+
+    def test_one_account_failure_isolated(self):
+        ok_txn = [{'accountTransactionId': 'OK1', 'amount': -1.0,
+                   'valueDate': '2026-03-01', 'counterPart': 'X', 'currencyCode': 978}]
+
+        # account1 succeeds, account2 raises via client
+        clients = {self.account.id: ok_txn, self.account2.id: ok_txn}
+
+        def get_client(self_rec):
+            c = MagicMock()
+            if self_rec.id == self.account2.id:
+                c.search_transactions.side_effect = ValueError('boom')
+            else:
+                c.search_transactions.return_value = clients[self_rec.id]
+            return c
+
+        with patch.object(type(self.account), '_viva_get_client', get_client), \
+                patch.object(self.env.cr, 'commit', lambda: None):
+            self.env['viva.account']._cron_viva_fetch()
+
+        self.assertTrue(self.env['account.bank.statement.line'].search_count([
+            ('journal_id', '=', self.journal.id), ('viva_transaction_id', '=', 'OK1')]))
+        self.assertTrue(self.account2.last_error)
