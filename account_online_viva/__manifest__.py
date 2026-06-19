@@ -17,6 +17,7 @@
         'data/ir_cron.xml',
         'views/res_config_settings_views.xml',
         'views/viva_account_views.xml',
+        'views/viva_setup_wizard_views.xml',
     ],
     'assets': {},
 }

@@ -342,3 +342,33 @@ class TestVivaCron(VivaCommon):
         self.account.invalidate_recordset()
         self.assertFalse(self.account.last_error)
         self.assertTrue(self.account.last_successful_to)
+
+
+from odoo.exceptions import UserError as OdooUserError
+
+
+class TestVivaSetupWizard(VivaCommon):
+    def setUp(self):
+        super().setUp()
+        self.company.viva_client_id = 'cid'
+        self.company.sudo().viva_client_secret = 'sec'
+
+    def test_discover_creates_account_and_journal(self):
+        wallets = [{'wallet_id': 'NEW1', 'iban': 'GR1601...', 'currency_code': 978,
+                    'balance': 0.0, 'name': 'New Wallet'}]
+        client = MagicMock()
+        client.list_wallets.return_value = wallets
+        wiz = self.env['viva.setup.wizard'].create({})
+        with patch('odoo.addons.account_online_viva.wizard.viva_setup_wizard.VivaClient',
+                   return_value=client):
+            wiz.action_discover()
+        acc = self.env['viva.account'].search([('wallet_id', '=', 'NEW1')])
+        self.assertEqual(len(acc), 1)
+        self.assertEqual(acc.journal_id.type, 'bank')
+        self.assertEqual(acc.iban, 'GR1601...')
+
+    def test_discover_requires_credentials(self):
+        self.company.viva_client_id = False
+        wiz = self.env['viva.setup.wizard'].create({})
+        with self.assertRaises(OdooUserError):
+            wiz.action_discover()
