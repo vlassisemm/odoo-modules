@@ -13,7 +13,9 @@
     'depends': ['account', 'mail'],
     'data': [
         'security/ir.model.access.csv',
+        'security/viva_security.xml',
         'views/res_config_settings_views.xml',
+        'views/viva_account_views.xml',
     ],
     'assets': {},
 }

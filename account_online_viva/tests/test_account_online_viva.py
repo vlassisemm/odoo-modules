@@ -90,3 +90,52 @@ class TestVivaClient(TransactionCase):
         self.assertEqual(body['WalletId'], 'W1')
         self.assertEqual(body['DateFrom'], '2026-01-01')
         self.assertEqual(body['DateTo'], '2026-01-31')
+
+
+from odoo.exceptions import AccessError
+
+
+class VivaCommon(TransactionCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.company = cls.env.company
+        cls.journal = cls.env['account.journal'].create({
+            'name': 'Viva Bank', 'type': 'bank', 'code': 'VIVA1',
+        })
+        cls.account = cls.env['viva.account'].create({
+            'name': 'Main wallet', 'journal_id': cls.journal.id, 'wallet_id': 'W1',
+        })
+
+
+class TestVivaAccountModel(VivaCommon):
+    def test_default_sync_start_date_90_days(self):
+        self.assertTrue(self.account.sync_start_date)
+
+    def test_journal_unique(self):
+        with self.assertRaises(Exception):
+            self.env['viva.account'].create({
+                'name': 'dup', 'journal_id': self.journal.id, 'wallet_id': 'W2'})
+
+    def test_get_client_reads_company_creds(self):
+        self.company.viva_client_id = 'cid'
+        self.company.sudo().viva_client_secret = 'sec'
+        client = self.account._viva_get_client()
+        self.assertEqual(client.client_id, 'cid')
+        self.assertEqual(client.environment, 'demo')
+
+
+class TestVivaAccountMultiCompany(VivaCommon):
+    def test_other_company_record_hidden(self):
+        other_company = self.env['res.company'].create({'name': 'Other Co'})
+        other_journal = self.env['account.journal'].create({
+            'name': 'OJ', 'type': 'bank', 'code': 'OJ1', 'company_id': other_company.id})
+        other_acc = self.env['viva.account'].create({
+            'name': 'other', 'journal_id': other_journal.id, 'wallet_id': 'WX',
+            'company_id': other_company.id})
+        user = self.env['res.users'].create({
+            'name': 'Acct', 'login': 'acct_viva',
+            'company_id': self.company.id, 'company_ids': [(6, 0, self.company.ids)],
+            'group_ids': [(4, self.env.ref('account.group_account_user').id)]})
+        visible = self.env['viva.account'].with_user(user).search([])
+        self.assertNotIn(other_acc.id, visible.ids)
