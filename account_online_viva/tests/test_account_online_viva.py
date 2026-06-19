@@ -67,6 +67,17 @@ class TestVivaClient(TransactionCase):
         self.assertEqual(wallets[0]['name'], 'Main')
 
     @patch(VIVA_PATH)
+    def test_token_failure_not_rewrapped_by_list_wallets(self, req):
+        req.post.side_effect = Exception('connection refused')
+        client = VivaClient('cid', 'sec', 'demo')
+        with self.assertRaises(VivaApiError) as ctx:
+            client.list_wallets()
+        self.assertTrue(
+            str(ctx.exception).startswith('OAuth token request failed'),
+            'Expected token error to propagate unchanged, got: %s' % ctx.exception,
+        )
+
+    @patch(VIVA_PATH)
     def test_search_transactions_posts_date_range(self, req):
         req.post.side_effect = [
             _resp({'access_token': 'tok', 'expires_in': 3600}),

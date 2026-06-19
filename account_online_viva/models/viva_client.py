@@ -66,6 +66,8 @@ class VivaClient:
             resp = http_requests.get(url, headers=self._headers(), timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
+        except VivaApiError:
+            raise
         except Exception as exc:
             raise VivaApiError('Wallet discovery failed: %s' % exc) from exc
         rows = data if isinstance(data, list) else data.get('wallets', data.get('Wallets', []))
@@ -92,6 +94,8 @@ class VivaClient:
                 url, headers=self._headers(), json=body, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
+        except VivaApiError:
+            raise
         except Exception as exc:
             raise VivaApiError('Transaction search failed: %s' % exc) from exc
         if isinstance(data, list):
