@@ -168,3 +168,12 @@ class TestStatementLineDedup(VivaCommon):
             'journal_id': self.journal.id, 'amount': 2.0, 'payment_ref': 'b'})
         self.env.flush_all()
         self.assertTrue(a.id and b.id)
+
+
+class TestJournalSource(VivaCommon):
+    def test_viva_in_available_sources(self):
+        sources = dict(self.journal._get_bank_statements_available_sources())
+        self.assertIn('viva', sources)
+
+    def test_viva_account_id_computed(self):
+        self.assertEqual(self.journal.viva_account_id, self.account)
