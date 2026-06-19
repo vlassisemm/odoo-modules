@@ -15,6 +15,17 @@ Fetch business registry data from AADE (Independent Authority for Public Revenue
 - Chatter audit trail (optional, when `mail` is installed)
 - Access restricted to Sales and Accounting users
 
+### [`account_online_viva`](account_online_viva/) — Viva Bank Connector (v19.0.1.0.0)
+
+Self-hosted Viva.com bank connector that imports Viva business-account IBAN transactions as bank statement lines via scheduled polling and manual fetch.
+
+- **Scheduled polling** via an ir.cron job that imports new transactions automatically
+- **Manual fetch** button on the Viva Account form to pull transactions on demand
+- **Date-range fetch** wizard for importing transactions over a custom period
+- Multi-company support with per-company Viva API credentials (client ID + secret)
+- Edition-agnostic — works with Odoo Community and Enterprise
+- Access restricted to Accounting users
+
 ### [`l10n_gr_edi`](l10n_gr_edi/) — Greece myDATA (v1.0, patched)
 
 Patched version of the official Odoo `l10n_gr_edi` module for Greece's myDATA e-invoicing platform. Fixes applied on top of the official code:
