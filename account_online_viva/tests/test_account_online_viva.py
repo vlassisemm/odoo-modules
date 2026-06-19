@@ -199,6 +199,12 @@ class TestVivaMapping(VivaCommon):
         self.assertIn('ACME', m['payment_ref'])
         self.assertEqual(m['transaction_details'], raw)
 
+    def test_map_transaction_no_label_fields_yields_viva_transaction(self):
+        raw = {'accountTransactionId': 'T8', 'amount': 5.0,
+               'valueDate': '2026-03-01T00:00:00'}
+        m = self.account._viva_map_transaction(raw)
+        self.assertEqual(m['payment_ref'], 'Viva transaction')
+
     def test_filter_new_drops_existing(self):
         self.env['account.bank.statement.line'].create({
             'journal_id': self.journal.id, 'amount': 1.0,

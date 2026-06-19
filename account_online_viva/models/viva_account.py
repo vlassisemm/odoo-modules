@@ -69,8 +69,12 @@ class VivaAccount(models.Model):
         reference = raw.get('reference') or raw.get('Reference') or ''
         type_id = raw.get('typeId', raw.get('TypeId'))
         subtype_id = raw.get('subTypeId', raw.get('SubTypeId'))
-        label = ' - '.join([p for p in (counterpart, reference) if p]) \
-            or _('Viva %(t)s/%(s)s', t=type_id, s=subtype_id)
+        label = ' - '.join([p for p in (counterpart, reference) if p])
+        if not label:
+            if type_id is not None or subtype_id is not None:
+                label = _('Viva %(t)s/%(s)s', t=type_id, s=subtype_id)
+            else:
+                label = _('Viva transaction')
         return {
             'viva_transaction_id': txn_id and str(txn_id),
             # NOTE (verify): amount is signed decimal; confirm not minor-units.
@@ -91,7 +95,7 @@ class VivaAccount(models.Model):
             ('journal_id', '=', self.journal_id.id),
             ('viva_transaction_id', 'in', ids),
         ]).mapped('viva_transaction_id'))
-        return [m for m in mapped if m['viva_transaction_id'] not in existing]
+        return [m for m in mapped if m.get('viva_transaction_id') not in existing]
 
     def _viva_line_vals(self, mapped):
         self.ensure_one()
