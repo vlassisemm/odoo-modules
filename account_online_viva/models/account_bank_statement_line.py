@@ -12,7 +12,7 @@ class AccountBankStatementLine(models.Model):
     def _auto_init(self):
         res = super()._auto_init()
         tools.create_index(
-            self._cr,
+            self.env.cr,
             'account_bank_statement_line_viva_txn_uniq',
             self._table,
             ['journal_id', 'viva_transaction_id'],

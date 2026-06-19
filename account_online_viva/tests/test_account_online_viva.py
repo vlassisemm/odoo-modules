@@ -3,7 +3,11 @@
 from datetime import date
 from unittest.mock import MagicMock, patch
 
+from psycopg2 import IntegrityError
+
+from odoo.exceptions import AccessError, UserError as OdooUserError
 from odoo.tests.common import TransactionCase
+from odoo.tools import mute_logger
 
 from odoo.addons.account_online_viva.models.viva_client import VivaClient, VivaApiError
 
@@ -138,10 +142,6 @@ class TestVivaAccountMultiCompany(VivaCommon):
             'group_ids': [(4, self.env.ref('account.group_account_user').id)]})
         visible = self.env['viva.account'].with_user(user).search([])
         self.assertNotIn(other_acc.id, visible.ids)
-
-
-from psycopg2 import IntegrityError
-from odoo.tools import mute_logger
 
 
 class TestStatementLineDedup(VivaCommon):
@@ -342,9 +342,6 @@ class TestVivaCron(VivaCommon):
         self.account.invalidate_recordset()
         self.assertFalse(self.account.last_error)
         self.assertTrue(self.account.last_successful_to)
-
-
-from odoo.exceptions import AccessError, UserError as OdooUserError
 
 
 class TestVivaManualFetch(VivaCommon):

@@ -46,20 +46,42 @@ class VivaSetupWizard(models.TransientModel):
                 'iban': w.get('iban'),
                 'currency_id': currency.id or False,
             })
+        if created:
+            domain = [('id', 'in', created.ids)]
+        else:
+            domain = [('company_id', '=', self.company_id.id)]
         return {
             'type': 'ir.actions.act_window',
             'name': _('Viva Accounts'),
             'res_model': 'viva.account',
             'view_mode': 'list,form',
-            'domain': [('id', 'in', created.ids or VivaAccount.search([]).ids)],
+            'domain': domain,
         }
 
+    def _unique_journal_code(self, base_code, company_id):
+        """Return a journal code derived from base_code that is unique for company_id."""
+        Journal = self.env['account.journal']
+        code = base_code[:5].upper()
+        if not Journal.search_count(
+                [('code', '=', code), ('company_id', '=', company_id)]):
+            return code
+        # Append numeric suffix until unique; keep within Odoo's 5-char limit.
+        for suffix in range(1, 100):
+            candidate = ('%s%s' % (base_code[:4], suffix))[:5].upper()
+            if not Journal.search_count(
+                    [('code', '=', candidate), ('company_id', '=', company_id)]):
+                return candidate
+        # Fallback: truncated wallet_id hash (should never be reached in practice)
+        return ('V%04d' % (hash(base_code) % 10000))
+
     def _create_bank_journal(self, wallet, currency):
-        company = self.company_id
+        company = self.company_id.sudo()
+        base_code = 'V%s' % wallet['wallet_id'][-4:]
+        code = self._unique_journal_code(base_code, company.id)
         vals = {
             'name': _('Viva %s', wallet.get('name') or wallet['wallet_id']),
             'type': 'bank',
-            'code': ('V%s' % wallet['wallet_id'][-4:])[:5].upper(),
+            'code': code,
             'company_id': company.id,
             'bank_statements_source': 'viva',
         }

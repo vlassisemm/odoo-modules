@@ -34,6 +34,7 @@
                             <field name="wallet_id"/>
                             <field name="iban"/>
                             <field name="currency_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
                         </group>
                         <group>
                             <field name="sync_start_date"/>
