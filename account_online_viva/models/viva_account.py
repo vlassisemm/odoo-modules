@@ -193,9 +193,8 @@ class VivaAccount(models.Model):
 
         if created and self.journal_id.bank_statements_source != 'viva':
             self.journal_id.sudo().bank_statements_source = 'viva'
-        self.last_successful_to = fields.Datetime.now()
-        self.last_error = False
-        self.message_post(
+        self.sudo().write({'last_successful_to': fields.Datetime.now(), 'last_error': False})
+        self.sudo().message_post(
             body=_('Viva sync: imported %(n)s transaction(s) (%(f)s → %(t)s).',
                    n=len(created), f=date_from, t=date_to),
             subtype_xmlid='mail.mt_note')
