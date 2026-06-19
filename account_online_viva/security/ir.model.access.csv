@@ -1,5 +1,5 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_viva_account_user,viva.account.user,model_viva_account,account.group_account_user,1,0,0,0
+access_viva_account_user,viva.account.user,model_viva_account,account.group_account_user,1,1,0,0
 access_viva_account_manager,viva.account.manager,model_viva_account,account.group_account_manager,1,1,1,1
 access_viva_setup_wizard,viva.setup.wizard,model_viva_setup_wizard,account.group_account_manager,1,1,1,1
 access_viva_fetch_wizard,viva.fetch.wizard,model_viva_fetch_wizard,account.group_account_user,1,1,1,1

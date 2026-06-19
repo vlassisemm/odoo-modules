@@ -372,6 +372,18 @@ class TestVivaManualFetch(VivaCommon):
         with self.assertRaises(AccessError):
             self.account.with_user(user).action_viva_fetch_now()
 
+    def test_fetch_now_allowed_for_accounting_user(self):
+        user = self.env['res.users'].create({
+            'name': 'Accountant', 'login': 'accountant_viva',
+            'group_ids': [(6, 0, [self.env.ref('account.group_account_user').id])]})
+        txns = [{'accountTransactionId': 'M2', 'amount': -5.0,
+                 'valueDate': '2026-03-01', 'counterPart': 'Y', 'currencyCode': 978}]
+        client = MagicMock()
+        client.search_transactions.return_value = txns
+        with patch.object(type(self.account), '_viva_get_client', return_value=client):
+            action = self.account.with_user(user).action_viva_fetch_now()
+        self.assertEqual(action['res_model'], 'account.bank.statement.line')
+
 
 class TestVivaSetupWizard(VivaCommon):
     def setUp(self):
