@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Vlassis Emmanouil -->
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl). -->
+<odoo>
+    <record id="res_config_settings_view_form_viva" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.viva</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="account.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//block[@id='bank_cash']" position="inside">
+                <setting string="Viva Bank Connector"
+                         help="Credentials for importing Viva business-account transactions">
+                    <field name="viva_environment"/>
+                    <field name="viva_client_id"/>
+                    <field name="viva_client_secret" password="True"
+                           groups="base.group_system"/>
+                </setting>
+            </xpath>
+        </field>
+    </record>
+</odoo>
