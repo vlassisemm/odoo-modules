@@ -21,6 +21,10 @@
         <field name="model">viva.account</field>
         <field name="arch" type="xml">
             <form>
+                <header>
+                    <button name="action_viva_fetch_now" type="object"
+                            string="Fetch now" class="btn-primary"/>
+                </header>
                 <sheet>
                     <group>
                         <group>

@@ -344,7 +344,33 @@ class TestVivaCron(VivaCommon):
         self.assertTrue(self.account.last_successful_to)
 
 
-from odoo.exceptions import UserError as OdooUserError
+from odoo.exceptions import AccessError, UserError as OdooUserError
+
+
+class TestVivaManualFetch(VivaCommon):
+    def setUp(self):
+        super().setUp()
+        self.company.viva_client_id = 'cid'
+        self.company.sudo().viva_client_secret = 'sec'
+        self.account.sync_start_date = date(2026, 1, 1)
+
+    def test_fetch_now_runs_sync(self):
+        txns = [{'accountTransactionId': 'M1', 'amount': -3.0,
+                 'valueDate': '2026-03-01', 'counterPart': 'X', 'currencyCode': 978}]
+        client = MagicMock()
+        client.search_transactions.return_value = txns
+        with patch.object(type(self.account), '_viva_get_client', return_value=client):
+            action = self.account.action_viva_fetch_now()
+        self.assertEqual(action['res_model'], 'account.bank.statement.line')
+        self.assertTrue(self.env['account.bank.statement.line'].search_count([
+            ('viva_transaction_id', '=', 'M1')]))
+
+    def test_fetch_now_blocked_for_non_accounting_user(self):
+        user = self.env['res.users'].create({
+            'name': 'Plain', 'login': 'plain_viva',
+            'group_ids': [(6, 0, [self.env.ref('base.group_user').id])]})
+        with self.assertRaises(AccessError):
+            self.account.with_user(user).action_viva_fetch_now()
 
 
 class TestVivaSetupWizard(VivaCommon):

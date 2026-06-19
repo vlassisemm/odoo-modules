@@ -6,7 +6,7 @@ from dateutil.relativedelta import relativedelta
 from psycopg2 import IntegrityError, OperationalError
 
 from odoo import _, api, fields, models
-from odoo.exceptions import UserError
+from odoo.exceptions import AccessError, UserError
 
 from .viva_client import VivaClient
 
@@ -200,6 +200,26 @@ class VivaAccount(models.Model):
                    n=len(created), f=date_from, t=date_to),
             subtype_xmlid='mail.mt_note')
         return created
+
+    def action_viva_fetch_now(self):
+        self.ensure_one()
+        if not self.env.su and not self.env.user.has_group('account.group_account_user'):
+            raise AccessError(_('You are not allowed to fetch Viva transactions.'))
+        self._viva_sync_one()
+        return self._viva_reconcile_action()
+
+    def _viva_reconcile_action(self):
+        self.ensure_one()
+        # Edition-agnostic: open the journal's statement lines. On Enterprise you may
+        # route to the bank reconciliation widget instead.
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Viva Transactions'),
+            'res_model': 'account.bank.statement.line',
+            'view_mode': 'list,form',
+            'domain': [('journal_id', '=', self.journal_id.id)],
+            'context': {'create': False},
+        }
 
     @api.model
     def _cron_viva_fetch(self):
