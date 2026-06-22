@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 
 from psycopg2 import IntegrityError
 
-from odoo.exceptions import AccessError, UserError as OdooUserError
+from odoo.exceptions import AccessError, UserError as OdooUserError, ValidationError
+from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 from odoo.tools import mute_logger
 
@@ -22,13 +23,18 @@ def _resp(json_data, status=200):
     return r
 
 
-class TestModuleInstall(TransactionCase):
+@tagged('post_install', '-at_install', 'account_online_viva')
+class VivaTransactionCase(TransactionCase):
+    pass
+
+
+class TestModuleInstall(VivaTransactionCase):
     def test_module_installed(self):
         module = self.env['ir.module.module'].search([('name', '=', 'account_online_viva')])
         self.assertEqual(module.state, 'installed')
 
 
-class TestCompanyCredentials(TransactionCase):
+class TestCompanyCredentials(VivaTransactionCase):
     def test_fields_exist_and_default(self):
         company = self.env.company
         company.viva_client_id = 'cid'
@@ -46,7 +52,7 @@ class TestCompanyCredentials(TransactionCase):
         self.assertEqual(self.env.company.viva_client_id, 'abc')
 
 
-class TestVivaClient(TransactionCase):
+class TestVivaClient(VivaTransactionCase):
     @patch(VIVA_PATH)
     def test_token_uses_demo_host_and_caches(self, req):
         req.post.return_value = _resp({'access_token': 'tok', 'expires_in': 3600})
@@ -62,13 +68,24 @@ class TestVivaClient(TransactionCase):
         req.post.return_value = _resp({'access_token': 'tok', 'expires_in': 3600})
         req.get.return_value = _resp([
             {'walletId': 'W1', 'iban': 'GR16...', 'currencyCode': 978,
-             'availableBalance': 12.5, 'friendlyName': 'Main'},
+             'available': 12.5, 'friendlyName': 'Main'},
         ])
         client = VivaClient('cid', 'sec', 'demo')
         wallets = client.list_wallets()
         self.assertEqual(wallets[0]['wallet_id'], 'W1')
         self.assertEqual(wallets[0]['currency_code'], 978)
+        self.assertEqual(wallets[0]['balance'], 12.5)
         self.assertEqual(wallets[0]['name'], 'Main')
+
+    @patch(VIVA_PATH)
+    def test_list_wallets_normalizes_numeric_wallet_id(self, req):
+        req.post.return_value = _resp({'access_token': 'tok', 'expires_in': 3600})
+        req.get.return_value = _resp([
+            {'walletId': 123456789012, 'iban': 'GR16...', 'currencyCode': 978},
+        ])
+        client = VivaClient('cid', 'sec', 'demo')
+        wallets = client.list_wallets()
+        self.assertEqual(wallets[0]['wallet_id'], '123456789012')
 
     @patch(VIVA_PATH)
     def test_token_failure_not_rewrapped_by_list_wallets(self, req):
@@ -85,19 +102,75 @@ class TestVivaClient(TransactionCase):
     def test_search_transactions_posts_date_range(self, req):
         req.post.side_effect = [
             _resp({'access_token': 'tok', 'expires_in': 3600}),
-            _resp([{'accountTransactionId': 'T1', 'amount': -5.0}]),
+            _resp({
+                'currentPage': 1,
+                'pageSize': 500,
+                'totalPages': 1,
+                'data': [{'accountTransactionId': 'T1', 'amount': -5.0}],
+            }),
         ]
         client = VivaClient('cid', 'sec', 'production')
         txns = client.search_transactions('W1', date(2026, 1, 1), date(2026, 1, 31))
         self.assertEqual(txns[0]['accountTransactionId'], 'T1')
         body = req.post.call_args.kwargs['json']
+        params = req.post.call_args.kwargs['params']
         self.assertEqual(body['WalletId'], 'W1')
         self.assertEqual(body['DateFrom'], '2026-01-01')
         self.assertEqual(body['DateTo'], '2026-01-31')
+        self.assertEqual(params['PageSize'], 500)
+        self.assertEqual(params['Page'], 1)
+        self.assertEqual(params['OrderBy'], 'Ascending')
+
+    @patch(VIVA_PATH)
+    def test_search_transactions_reads_all_documented_pages(self, req):
+        req.post.side_effect = [
+            _resp({'access_token': 'tok', 'expires_in': 3600}),
+            _resp({
+                'currentPage': 1,
+                'pageSize': 1,
+                'totalPages': 2,
+                'data': [{'accountTransactionId': 'T1', 'amount': -5.0}],
+            }),
+            _resp({
+                'currentPage': 2,
+                'pageSize': 1,
+                'totalPages': 2,
+                'data': [{'accountTransactionId': 'T2', 'amount': 7.0}],
+            }),
+        ]
+        client = VivaClient('cid', 'sec', 'production')
+        txns = client.search_transactions(
+            '123456789012', date(2026, 1, 1), date(2026, 1, 31), page_size=1)
+        self.assertEqual([txn['accountTransactionId'] for txn in txns], ['T1', 'T2'])
+        self.assertEqual(req.post.call_args_list[1].kwargs['json']['WalletId'], 123456789012)
+        pages = [call.kwargs['params']['Page'] for call in req.post.call_args_list[1:]]
+        self.assertEqual(pages, [1, 2])
+
+    @mute_logger('odoo.addons.account_online_viva.models.viva_client')
+    @patch(VIVA_PATH)
+    def test_search_transactions_stops_at_page_safety_cap(self, req):
+        def post_side_effect(*args, **kwargs):
+            url = args[0] if args else kwargs.get('url', '')
+            if url.endswith('/connect/token'):
+                return _resp({'access_token': 'tok', 'expires_in': 3600})
+            page = kwargs['params']['Page']
+            # Always claim far more pages than the cap to force the backstop.
+            return _resp({
+                'currentPage': page, 'pageSize': 1, 'totalPages': 9999,
+                'data': [{'accountTransactionId': 'T%s' % page}],
+            })
+        req.post.side_effect = post_side_effect
+        client = VivaClient('cid', 'sec', 'production')
+        with patch(
+                'odoo.addons.account_online_viva.models.viva_client.MAX_PAGES', 3):
+            txns = client.search_transactions(
+                '123', date(2026, 1, 1), date(2026, 1, 31), page_size=1)
+        self.assertEqual(len(txns), 3)
+        # One token request + exactly MAX_PAGES page requests (not 9999).
+        self.assertEqual(req.post.call_count, 1 + 3)
 
 
-
-class VivaCommon(TransactionCase):
+class VivaCommon(VivaTransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -115,6 +188,7 @@ class TestVivaAccountModel(VivaCommon):
     def test_default_sync_start_date_90_days(self):
         self.assertTrue(self.account.sync_start_date)
 
+    @mute_logger('odoo.sql_db')
     def test_journal_unique(self):
         with self.assertRaises(Exception):
             self.env['viva.account'].create({
@@ -142,6 +216,22 @@ class TestVivaAccountMultiCompany(VivaCommon):
             'group_ids': [(4, self.env.ref('account.group_account_user').id)]})
         visible = self.env['viva.account'].with_user(user).search([])
         self.assertNotIn(other_acc.id, visible.ids)
+
+    def test_company_must_match_journal_company(self):
+        other_company = self.env['res.company'].create({'name': 'Mismatch Co'})
+        other_journal = self.env['account.journal'].create({
+            'name': 'Mismatch Journal',
+            'type': 'bank',
+            'code': 'MMJ',
+            'company_id': other_company.id,
+        })
+        with self.assertRaises(ValidationError):
+            self.env['viva.account'].create({
+                'name': 'bad',
+                'journal_id': other_journal.id,
+                'wallet_id': 'BAD',
+                'company_id': self.company.id,
+            })
 
 
 class TestStatementLineDedup(VivaCommon):
@@ -178,6 +268,13 @@ class TestJournalSource(VivaCommon):
 
     def test_viva_account_id_computed(self):
         self.assertEqual(self.journal.viva_account_id, self.account)
+
+    def test_journal_fetch_action_delegates_to_viva_account(self):
+        with patch.object(type(self.account), 'action_viva_fetch_now') as fetch_now:
+            fetch_now.return_value = {'type': 'ir.actions.act_window'}
+            action = self.journal.action_viva_fetch_now()
+        self.assertEqual(action['type'], 'ir.actions.act_window')
+        fetch_now.assert_called_once()
 
 
 class TestVivaMapping(VivaCommon):
@@ -290,10 +387,10 @@ class TestVivaWindow(VivaCommon):
     def test_incremental_clamped_to_sync_start_date(self):
         from datetime import timedelta
         from odoo import fields as odoo_fields
-        # last_successful_to - 7d would be before sync_start_date → must clamp to sync_start_date
+        # last_successful_to - 7d would be before sync_start_date; must clamp.
         # Set last_successful_to such that last_successful_to.date() - 7d < sync_start_date
         self.account.sync_start_date = date(2026, 3, 1)
-        # last_successful_to = 2026-03-05, so overlap window = 2026-02-26 < sync_start_date
+        # last_successful_to = 2026-03-05, so overlap window is before sync_start_date.
         self.account.last_successful_to = odoo_fields.Datetime.to_datetime('2026-03-05 00:00:00')
 
         client = self._make_client()
@@ -317,6 +414,7 @@ class TestVivaCron(VivaCommon):
             'sync_start_date': date(2026, 1, 1)})
         self.account.sync_start_date = date(2026, 1, 1)
 
+    @mute_logger('odoo.addons.account_online_viva.models.viva_account')
     def test_one_account_failure_isolated(self):
         ok_txn = [{'accountTransactionId': 'OK1', 'amount': -1.0,
                    'valueDate': '2026-03-01', 'counterPart': 'X', 'currencyCode': 978}]
@@ -380,6 +478,25 @@ class TestVivaManualFetch(VivaCommon):
         with patch.object(type(self.account), '_viva_get_client', return_value=client):
             action = self.account.with_user(user).action_viva_fetch_now()
         self.assertEqual(action['res_model'], 'account.bank.statement.line')
+
+    def test_date_range_wizard_does_not_advance_incremental_watermark(self):
+        from odoo import fields as odoo_fields
+
+        old_watermark = odoo_fields.Datetime.to_datetime('2026-06-01 12:00:00')
+        self.account.last_successful_to = old_watermark
+        txns = [{'accountTransactionId': 'HIST1', 'amount': -5.0,
+                 'valueDate': '2026-02-01', 'counterPart': 'Y', 'currencyCode': 978}]
+        client = MagicMock()
+        client.search_transactions.return_value = txns
+        wizard = self.env['viva.fetch.wizard'].create({
+            'viva_account_id': self.account.id,
+            'date_from': date(2026, 2, 1),
+            'date_to': date(2026, 2, 28),
+        })
+        with patch.object(type(self.account), '_viva_get_client', return_value=client):
+            wizard.action_fetch()
+        self.account.invalidate_recordset(['last_successful_to'])
+        self.assertEqual(self.account.last_successful_to, old_watermark)
 
 
 class TestVivaSetupWizard(VivaCommon):

@@ -6,7 +6,7 @@ from dateutil.relativedelta import relativedelta
 from psycopg2 import IntegrityError, OperationalError
 
 from odoo import _, api, fields, models
-from odoo.exceptions import AccessError, UserError
+from odoo.exceptions import AccessError, UserError, ValidationError
 
 from .viva_client import VivaClient
 
@@ -32,6 +32,7 @@ class VivaAccount(models.Model):
         'res.company', required=True, default=lambda self: self.env.company)
     journal_id = fields.Many2one(
         'account.journal', required=True, ondelete='cascade',
+        check_company=True,
         domain="[('type', '=', 'bank'), ('company_id', '=', company_id)]")
     wallet_id = fields.Char(required=True, help='Viva WalletId polled for transactions')
     iban = fields.Char()
@@ -47,6 +48,16 @@ class VivaAccount(models.Model):
         'UNIQUE(journal_id)',
         'A Viva account already exists for this journal.',
     )
+
+    @api.constrains('company_id', 'journal_id')
+    def _check_journal_company(self):
+        for account in self:
+            if (
+                    account.company_id
+                    and account.journal_id
+                    and account.journal_id.company_id != account.company_id):
+                raise ValidationError(
+                    _('The Viva account company must match the bank journal company.'))
 
     def _viva_get_client(self):
         self.ensure_one()
@@ -120,27 +131,31 @@ class VivaAccount(models.Model):
     def _viva_lock(self):
         self.ensure_one()
         try:
-            self.env.cr.execute(
-                'SELECT id FROM viva_account WHERE id = %s FOR UPDATE NOWAIT', [self.id])
+            with self.env.cr.savepoint():
+                self.env.cr.execute(
+                    'SELECT id FROM viva_account WHERE id = %s FOR UPDATE NOWAIT',
+                    [self.id],
+                )
         except OperationalError as exc:
             raise UserError(_('A sync for this Viva account is already running.')) from exc
 
     def _viva_create_lines(self, mapped_new):
         self.ensure_one()
         BSL = self.env['account.bank.statement.line']
+        create_model = BSL.sudo().with_company(self.journal_id.company_id)
         vals_list = [self._viva_line_vals(m) for m in mapped_new]
         created = BSL
         for i in range(0, len(vals_list), BATCH):
             chunk = vals_list[i:i + BATCH]
             try:
                 with self.env.cr.savepoint():
-                    created |= BSL.create(chunk)
+                    created |= BSL.browse(create_model.create(chunk).ids)
             except IntegrityError:
                 # Concurrent insert created some ids; fall back per-line, skipping dups.
                 for vals in chunk:
                     try:
                         with self.env.cr.savepoint():
-                            created |= BSL.create(vals)
+                            created |= BSL.browse(create_model.create(vals).ids)
                     except IntegrityError:
                         continue
         return created
@@ -158,7 +173,7 @@ class VivaAccount(models.Model):
             date_from = max(date_from, self.sync_start_date)
         return date_from, date_to
 
-    def _viva_sync_one(self, date_from=None, date_to=None):
+    def _viva_sync_one(self, date_from=None, date_to=None, update_watermark=True):
         self.ensure_one()
         self._viva_lock()
         company = self.company_id
@@ -193,7 +208,10 @@ class VivaAccount(models.Model):
 
         if created and self.journal_id.bank_statements_source != 'viva':
             self.journal_id.sudo().bank_statements_source = 'viva'
-        self.sudo().write({'last_successful_to': fields.Datetime.now(), 'last_error': False})
+        state_vals = {'last_error': False}
+        if update_watermark:
+            state_vals['last_successful_to'] = fields.Datetime.to_datetime(date_to)
+        self.sudo().write(state_vals)
         self.sudo().message_post(
             body=_('Viva sync: imported %(n)s transaction(s) (%(f)s → %(t)s).',
                    n=len(created), f=date_from, t=date_to),

@@ -81,10 +81,11 @@ class VivaSetupWizard(models.TransientModel):
 
     def _create_bank_journal(self, wallet, currency):
         company = self.company_id.sudo()
-        base_code = 'V%s' % wallet['wallet_id'][-4:]
+        wallet_id = str(wallet['wallet_id'])
+        base_code = 'V%s' % wallet_id[-4:]
         code = self._unique_journal_code(base_code, company.id)
         vals = {
-            'name': _('Viva %s', wallet.get('name') or wallet['wallet_id']),
+            'name': _('Viva %s', wallet.get('name') or wallet_id),
             'type': 'bank',
             'code': code,
             'company_id': company.id,

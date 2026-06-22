@@ -5,3 +5,8 @@ __pycache__/
 .venv/
 CLAUDE.md
 AGENTS.md
+
+# Local credentials / config (never commit secrets)
+*.env
+your-secrets.env
+.viva-odoo.conf

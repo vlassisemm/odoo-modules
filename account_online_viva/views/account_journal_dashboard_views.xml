@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Vlassis Emmanouil -->
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl). -->
+<odoo>
+    <record id="account_journal_dashboard_kanban_viva" model="ir.ui.view">
+        <field name="name">account.journal.dashboard.kanban.viva</field>
+        <field name="model">account.journal</field>
+        <field name="inherit_id" ref="account.account_journal_dashboard_kanban_view"/>
+        <field name="arch" type="xml">
+            <field name="bank_account_id" position="after">
+                <field name="viva_account_id"/>
+            </field>
+            <xpath expr="//div[@name='bank_cash_buttons']/button[@id='all_transactions_btn']" position="after">
+                <button t-if="journal_type == 'bank' and dashboard.bank_statements_source == 'viva' and record.viva_account_id.raw_value"
+                        name="action_viva_fetch_now"
+                        type="object"
+                        class="btn btn-secondary"
+                        groups="account.group_account_user">
+                    Fetch Viva
+                </button>
+            </xpath>
+        </field>
+    </record>
+</odoo>

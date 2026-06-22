@@ -14,5 +14,8 @@ class VivaFetchWizard(models.TransientModel):
     def action_fetch(self):
         self.ensure_one()
         self.viva_account_id._viva_sync_one(
-            date_from=self.date_from, date_to=self.date_to)
+            date_from=self.date_from,
+            date_to=self.date_to,
+            update_watermark=False,
+        )
         return self.viva_account_id._viva_reconcile_action()

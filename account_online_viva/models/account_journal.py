@@ -1,6 +1,7 @@
 # Copyright 2026 Vlassis Emmanouil
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
 from odoo import _, fields, models
+from odoo.exceptions import UserError
 
 
 class AccountJournal(models.Model):
@@ -20,3 +21,9 @@ class AccountJournal(models.Model):
         rslt = super(AccountJournal, self).__get_bank_statements_available_sources()
         rslt.append(('viva', _('Viva.com')))
         return rslt
+
+    def action_viva_fetch_now(self):
+        self.ensure_one()
+        if not self.viva_account_id:
+            raise UserError(_('Configure a Viva account before fetching transactions.'))
+        return self.viva_account_id.action_viva_fetch_now()

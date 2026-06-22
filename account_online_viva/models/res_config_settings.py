@@ -10,6 +10,7 @@ class ResConfigSettings(models.TransientModel):
         related='company_id.viva_client_id', readonly=False)
     viva_client_secret = fields.Char(
         related='company_id.viva_client_secret', readonly=False,
-        groups='base.group_system')
+        groups='base.group_system',
+        copy=False)
     viva_environment = fields.Selection(
         related='company_id.viva_environment', readonly=False)
