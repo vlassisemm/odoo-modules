@@ -1,6 +1,6 @@
+#!/usr/bin/env python3
 # Copyright 2026 Vlassis Emmanouil
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
-#!/usr/bin/env python3
 """Standalone smoke test for Viva Data Services access (no Odoo needed).
 
 Goal: confirm a demo account has Data Services enabled, that our OAuth token +
@@ -42,9 +42,10 @@ HOSTS = {
     },
 }
 
-# Confirmed scopes (Viva OpenAPI spec). Acquiring (Sale Transactions File API) uses
-# datafileapi; bank statements (Account Transactions) use publicapi; the Wallet API
-# uses core:api:merchants:wallets. Override with --scope.
+# Confirmed scopes (Viva OpenAPI spec + live verification 2026-07-07): every
+# /dataservices/* endpoint (acquiring exports, Account Transactions, MT940,
+# webhooks) uses datafileapi; the Wallet API uses core:api:merchants:wallets.
+# Override with --scope.
 DEFAULT_SCOPE = 'urn:viva:payments:biservices:datafileapi'
 
 # Confirmed File Request (export) endpoint for the Sale Transactions report.
@@ -109,7 +110,8 @@ def request_report(api_host, report_path, token, date, http_method, use_query,
 
 def main():
     p = argparse.ArgumentParser(description='Viva Data Services smoke test')
-    p.add_argument('--date', required=True, help='Report date, YYYY-MM-DD')
+    p.add_argument('--date', help='Report date, YYYY-MM-DD '
+                                  '(required unless --token-only)')
     p.add_argument('--env', default=os.environ.get('VIVA_ENV', 'demo'),
                    choices=['demo', 'production'])
     p.add_argument('--scope', default=DEFAULT_SCOPE)
@@ -125,6 +127,8 @@ def main():
     p.add_argument('--token-only', action='store_true',
                    help='Only test the OAuth token (skip the file request)')
     args = p.parse_args()
+    if not args.token_only and not args.date:
+        p.error('--date is required unless --token-only is set')
 
     client_id = os.environ.get('VIVA_CLIENT_ID')
     client_secret = os.environ.get('VIVA_CLIENT_SECRET')

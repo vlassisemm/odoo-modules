@@ -111,7 +111,7 @@ reconciliation.
 | Purpose            | Method & Path                                                | OAuth scope |
 |--------------------|--------------------------------------------------------------|-------------|
 | OAuth2 token       | `POST {accounts-host}/connect/token`                         | — (client-credentials) |
-| Wallet discovery   | `GET {api-host}/walletaccounts/v1/wallets`                   | `urn:viva:payments:core:api:merchants:wallets` |
+| Wallet discovery   | `GET {api-host}/merchants/v1/wallets`                        | `urn:viva:payments:core:api:merchants:wallets` |
 | Transaction search | `POST {api-host}/dataservices/v2/accounttransactions/Search` | `urn:viva:payments:biservices:datafileapi` |
 
 Hosts by environment:
@@ -153,24 +153,25 @@ python3 account_online_viva/scripts/test_viva_dataservices.py \
 
 ## Status
 
-This module is **Alpha**. The OAuth client-credentials flow, the host pairs, and
-the credential model are **verified against the live Viva API**. The current
-blocker is account-side: Data Services must be enabled on the credential (see
-[Viva access requirements](#viva-access-requirements)).
+This module is **Alpha**. The transaction-import path is **verified end-to-end
+against the live production Viva API** (2026-07-07): OAuth token with the
+`datafileapi` scope, `POST /dataservices/v2/accounttransactions/Search`, and
+its pagination contract (full pages until `HTTP 204 No Content`; the deprecated
+`totalPages` field is ignored).
 
-Known issues to address before production (verified against Viva's published
-OpenAPI spec and a live account):
+Remaining TODO (blocked on credentials, not code):
 
-- **Scope:** `VivaClient` currently requests `…:biservices:publicapi`; the
-  correct scope for all Data Services endpoints is `…:biservices:datafileapi`.
-- **Endpoint version:** the transaction-search path should be
-  `/dataservices/v2/accounttransactions/Search` (v2), not v1.
-- **Pagination:** Viva marks the `totalPages` response field deprecated. Paging
-  must increment `Page` (from 1) until an `HTTP 204 No Content`, rather than
-  relying on `totalPages` (which can return 0/-1 and stop after page 1).
+- **Wallet discovery** needs a **core_api-audience credential** with Wallet API
+  access (`urn:viva:payments:core:api:merchants:wallets`). Data Services
+  credentials are biservices-only: they cannot mint that scope
+  (`invalid_scope`), and the wallet endpoints reject biservices tokens with
+  401 *audience invalid*. Until Viva provides such a credential, the
+  *Discover Wallets* wizard fails with a clear message — create the bank
+  journal and Viva Account manually instead (the `walletId` appears in the
+  transaction data).
 
-Response field names are still coded defensively (multiple key spellings
-tolerated) and should be confirmed against real transaction data once access is
+Wallet-response field names are still coded defensively (multiple key
+spellings tolerated) and should be confirmed once Wallet API access is
 granted.
 
 ## License

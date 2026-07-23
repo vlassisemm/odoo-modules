@@ -2,13 +2,15 @@
 <!-- Copyright 2026 Vlassis Emmanouil -->
 <!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl). -->
 <odoo>
-    <record id="ir_cron_viva_fetch" model="ir.cron">
-        <field name="name">Viva: fetch bank transactions</field>
-        <field name="model_id" ref="model_viva_account"/>
-        <field name="state">code</field>
-        <field name="code">model._cron_viva_fetch()</field>
-        <field name="interval_number">12</field>
-        <field name="interval_type">hours</field>
-        <field name="active" eval="True"/>
-    </record>
+    <data noupdate="1">
+        <record id="ir_cron_viva_fetch" model="ir.cron">
+            <field name="name">Viva: fetch bank transactions</field>
+            <field name="model_id" ref="model_viva_account"/>
+            <field name="state">code</field>
+            <field name="code">model._cron_viva_fetch()</field>
+            <field name="interval_number">12</field>
+            <field name="interval_type">hours</field>
+            <field name="active" eval="True"/>
+        </record>
+    </data>
 </odoo>

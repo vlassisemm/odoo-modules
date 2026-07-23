@@ -1,11 +1,9 @@
 # Copyright 2026 Vlassis Emmanouil
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
-import hashlib
-
 from odoo import _, fields, models
 from odoo.exceptions import UserError
 
-from ..models.viva_client import VivaClient, VivaApiError
+from ..models.viva_client import VivaApiError
 
 
 class VivaSetupWizard(models.TransientModel):
@@ -22,21 +20,27 @@ class VivaSetupWizard(models.TransientModel):
         company = self.company_id.sudo()
         if not (company.viva_client_id and company.viva_client_secret):
             raise UserError(_('Set the Viva Client ID and Secret first (Settings).'))
-        client = VivaClient(
-            company.viva_client_id, company.viva_client_secret, company.viva_environment)
+        client = self.company_id._viva_get_client()
         try:
             wallets = client.list_wallets()
         except VivaApiError as exc:
-            raise UserError(_('Could not connect to Viva: %s', exc)) from exc
+            # TODO (credentials): with a Data-Services-only credential the
+            # Wallet API always rejects the token (wrong audience/scope) —
+            # discovery needs a core_api credential with Wallet access.
+            raise UserError(_(
+                'Could not list Viva wallets: %(error)s\n\n'
+                'Note: wallet discovery needs a credential with Wallet API '
+                'access (scope core:api:merchants:wallets). Data Services '
+                'credentials only cover transaction import; with those, '
+                'create the bank journal and Viva account manually.',
+                error=exc)) from exc
 
         VivaAccount = self.env['viva.account']
+        known_wallet_ids = set(VivaAccount.with_context(active_test=False).search(
+            [('company_id', '=', self.company_id.id)]).mapped('wallet_id'))
         created = VivaAccount
         for w in wallets:
-            if not w.get('wallet_id'):
-                continue
-            if VivaAccount.search_count([
-                    ('wallet_id', '=', w['wallet_id']),
-                    ('company_id', '=', self.company_id.id)]):
+            if not w.get('wallet_id') or w['wallet_id'] in known_wallet_ids:
                 continue
             currency = VivaAccount._viva_currency_from_code(w.get('currency_code'))
             journal = self._create_bank_journal(w, currency)
@@ -45,8 +49,6 @@ class VivaSetupWizard(models.TransientModel):
                 'company_id': self.company_id.id,
                 'journal_id': journal.id,
                 'wallet_id': w['wallet_id'],
-                'iban': w.get('iban'),
-                'currency_id': currency.id or False,
             })
         if created:
             domain = [('id', 'in', created.ids)]
@@ -61,23 +63,24 @@ class VivaSetupWizard(models.TransientModel):
         }
 
     def _unique_journal_code(self, base_code, company_id):
-        """Return a journal code derived from base_code that is unique for company_id."""
-        Journal = self.env['account.journal']
+        """Return a journal code derived from base_code that is unique for
+        company_id, or None to let core auto-generate one."""
+        existing = set(
+            self.env['account.journal'].with_context(active_test=False).search_fetch(
+                [('company_id', '=', company_id)], ['code']).mapped('code'))
         code = base_code[:5].upper()
-        if not Journal.search_count(
-                [('code', '=', code), ('company_id', '=', company_id)]):
+        if code not in existing:
             return code
         # Append numeric suffix until unique; keep within Odoo's 5-char limit.
         # Trim base to make room for each suffix so candidates are genuinely distinct.
         for suffix in range(1, 100):
             suffix_str = str(suffix)
             candidate = (base_code[:5 - len(suffix_str)] + suffix_str).upper()
-            if not Journal.search_count(
-                    [('code', '=', candidate), ('company_id', '=', company_id)]):
+            if candidate not in existing:
                 return candidate
-        # Fallback: stable md5-derived hash (should never be reached in practice)
-        digest = int(hashlib.md5(base_code.encode()).hexdigest()[:4], 16) % 10000
-        return ('V%04d' % digest)
+        # Give up: omitting the code lets account.journal's _compute_code
+        # assign the next free one (it also checks archived journals).
+        return None
 
     def _create_bank_journal(self, wallet, currency):
         company = self.company_id.sudo()
@@ -87,17 +90,18 @@ class VivaSetupWizard(models.TransientModel):
         vals = {
             'name': _('Viva %s', wallet.get('name') or wallet_id),
             'type': 'bank',
-            'code': code,
             'company_id': company.id,
             'bank_statements_source': 'viva',
         }
+        if code:
+            vals['code'] = code
         if currency:
             vals['currency_id'] = currency.id
         if wallet.get('iban'):
-            bank_acc = self.env['res.partner.bank'].create({
-                'acc_number': wallet['iban'],
-                'partner_id': company.partner_id.id,
-                'company_id': company.id,
-            })
-            vals['bank_account_id'] = bank_acc.id
-        return self.env['account.journal'].create(vals)
+            # Core's create() routes bank_acc_number through
+            # res.partner.bank._find_or_create_bank_account: no duplicate
+            # res.partner.bank rows for an already-registered IBAN. sudo():
+            # creating res.partner.bank needs base.group_partner_manager,
+            # which accounting managers do not necessarily have.
+            vals['bank_acc_number'] = wallet['iban']
+        return self.env['account.journal'].sudo().create(vals)

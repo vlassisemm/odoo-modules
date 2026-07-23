@@ -1,6 +1,7 @@
 # Copyright 2026 Vlassis Emmanouil
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
-from odoo import fields, models
+from odoo import _, fields, models
+from odoo.exceptions import AccessError
 
 
 class VivaFetchWizard(models.TransientModel):
@@ -13,6 +14,9 @@ class VivaFetchWizard(models.TransientModel):
 
     def action_fetch(self):
         self.ensure_one()
+        if not self.env.su and not self.env.user.has_group(
+                'account.group_account_user'):
+            raise AccessError(_('You are not allowed to fetch Viva transactions.'))
         self.viva_account_id._viva_sync_one(
             date_from=self.date_from,
             date_to=self.date_to,
