@@ -191,3 +191,80 @@ class TestMyDataFetchParse(TestMyDataFetchCommon):
         self.assertEqual(inv['issuer']['street'], 'Hauptstr.')
         self.assertEqual(inv['issuer']['city'], 'Berlin')
         self.assertEqual(inv['header']['correlated_marks'], ['400001111111111'])
+
+
+class TestMyDataFetchPartner(TestMyDataFetchCommon):
+
+    def _issuer(self, **overrides):
+        issuer = {'vat': '123456789', 'country': 'GR', 'branch': 0, 'name': None,
+                  'street': None, 'number': None, 'postal_code': None, 'city': None}
+        issuer.update(overrides)
+        return issuer
+
+    def test_match_existing_partner_el_prefix(self):
+        existing = self.env['res.partner'].create({
+            'name': 'Known Vendor', 'vat': 'EL123456789', 'is_company': True,
+        })
+        partner, report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
+        self.assertEqual(partner, existing)
+        self.assertTrue(any('matched' in line.lower() for line in report))
+
+    def test_match_existing_partner_bare_vat(self):
+        existing = self.env['res.partner'].create({
+            'name': 'Bare Vendor', 'vat': '123456789', 'is_company': True,
+        })
+        partner, _report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
+        self.assertEqual(partner, existing)
+
+    def test_match_archived_partner(self):
+        existing = self.env['res.partner'].create({
+            'name': 'Archived Vendor', 'vat': 'EL123456789', 'active': False,
+        })
+        partner, _report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
+        self.assertEqual(partner, existing)
+
+    def test_create_minimal_greek_partner_tagged(self):
+        partner, report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
+        self.assertEqual(partner.vat, 'EL123456789')
+        self.assertIn('123456789', partner.name)
+        self.assertTrue(partner.is_company)
+        self.assertEqual(partner.supplier_rank, 1)
+        tag = self.env.ref('l10n_gr_edi.res_partner_category_mydata_auto')
+        self.assertIn(tag, partner.category_id)
+
+    def test_create_foreign_partner_with_address(self):
+        issuer = self._issuer(
+            vat='DE811907980', country='DE', name='ACME GmbH',
+            street='Hauptstr.', number='5', postal_code='10115', city='Berlin')
+        partner, _report = self.company._l10n_gr_edi_resolve_partner(issuer)
+        self.assertEqual(partner.name, 'ACME GmbH')
+        self.assertEqual(partner.vat, 'DE811907980')
+        self.assertEqual(partner.street, 'Hauptstr. 5')
+        self.assertEqual(partner.zip, '10115')
+        self.assertEqual(partner.city, 'Berlin')
+        self.assertEqual(partner.country_id.code, 'DE')
+
+    def test_enrichment_applied_when_afm_installed(self):
+        Partner = self.env['res.partner']
+        if not hasattr(Partner, '_l10n_gr_afm_call_aade'):
+            self.skipTest('l10n_gr_afm not installed in this registry')
+        self.company.sudo().write({
+            'l10n_gr_afm_aade_username': 'u', 'l10n_gr_afm_aade_password': 'p',
+        })
+        with patch.object(
+            Partner.__class__, '_l10n_gr_afm_call_aade',
+            return_value={'afm_name': 'REAL NAME SA', 'afm_street': 'Stadiou 1',
+                          'afm_zip': '10559', 'afm_city': 'Athens'},
+        ):
+            partner, report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
+        self.assertEqual(partner.name, 'REAL NAME SA')
+        self.assertEqual(partner.street, 'Stadiou 1')
+        self.assertTrue(any('enriched' in line.lower() for line in report))
+
+    def test_enrichment_skipped_without_credentials(self):
+        # Works whether or not l10n_gr_afm is installed: without credentials
+        # (or without the module) the partner must stay minimal, creation must succeed.
+        partner, report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
+        self.assertIn('123456789', partner.name)
+        self.assertTrue(any('skipped' in line.lower() or 'not installed' in line.lower()
+                            for line in report))

@@ -193,3 +193,85 @@ class ResCompany(models.Model):
             'continuation': continuation,
             'max_mark': max(marks, default=0),
         }
+
+    # ------------------------------------------------------------------
+    # Partner resolution
+    # ------------------------------------------------------------------
+
+    def _l10n_gr_edi_enrich_partner_from_afm(self, partner):
+        """Best-effort enrichment of a Greek partner from the AADE registry
+        via l10n_gr_afm (soft dependency). Returns one chatter report line."""
+        self.ensure_one()
+        Partner = self.env['res.partner']
+        if not hasattr(Partner, '_l10n_gr_afm_call_aade'):
+            return _('AADE registry enrichment skipped: l10n_gr_afm is not installed.')
+        company_sudo = self.sudo()
+        username = company_sudo.l10n_gr_afm_aade_username
+        password = company_sudo.l10n_gr_afm_aade_password
+        if not (username and password):
+            return _('AADE registry enrichment skipped: no AADE registry credentials configured.')
+        try:
+            afm = Partner._l10n_gr_afm_extract_vat(partner.vat)
+            data = Partner._l10n_gr_afm_call_aade(afm, username, password)
+        except Exception as error:  # noqa: BLE001 - UserError/network; must never break the fetch
+            _logger.warning("myDATA fetch: AADE enrichment failed for %s: %s", partner.vat, error)
+            return _('AADE registry enrichment failed: %s', error)
+        partner.write({
+            field: value
+            for field, value in {
+                'name': data.get('afm_name'),
+                'street': data.get('afm_street'),
+                'zip': data.get('afm_zip'),
+                'city': data.get('afm_city'),
+            }.items()
+            if value
+        })
+        return _('Partner enriched from the AADE registry.')
+
+    def _l10n_gr_edi_resolve_partner(self, issuer):
+        """Return (partner, report_lines) for a payload issuer dict.
+        Matches by VAT first; otherwise creates a tagged minimal partner,
+        enriched from the AADE registry for Greek issuers when possible."""
+        self.ensure_one()
+        report = []
+        Partner = self.env['res.partner'].sudo().with_context(active_test=False)
+        afm = issuer['vat']
+        is_greek = (issuer['country'] or 'GR') == 'GR'
+        vat_variants = [f'EL{afm}', afm] if is_greek else [afm]
+        candidates = Partner.search([
+            ('vat', 'in', vat_variants),
+            '|', ('company_id', '=', False), ('company_id', '=', self.id),
+        ])
+        if candidates:
+            exact_company = candidates.filtered(lambda p: p.company_id == self)
+            pool = exact_company or candidates
+            partner = pool.sorted(key=lambda p: (not p.is_company, p.id))[:1]
+            report.append(_('Partner matched by VAT: %s', partner.display_name))
+            return partner, report
+        vals = {
+            'name': issuer['name'] or _('Vendor %s (myDATA)', afm),
+            'vat': vat_variants[0],
+            'is_company': True,
+            'supplier_rank': 1,
+            'company_id': False,
+            'category_id': [Command.link(
+                self.env.ref('l10n_gr_edi.res_partner_category_mydata_auto').id)],
+        }
+        if issuer['country']:
+            country = self.env['res.country'].search(
+                [('code', '=', issuer['country'])], limit=1)
+            if country:
+                vals['country_id'] = country.id
+        if issuer['street'] or issuer['number']:
+            vals['street'] = ' '.join(filter(None, [issuer['street'], issuer['number']]))
+        if issuer['postal_code']:
+            vals['zip'] = issuer['postal_code']
+        if issuer['city']:
+            vals['city'] = issuer['city']
+        if issuer['branch']:
+            vals['l10n_gr_edi_branch_number'] = issuer['branch']
+        partner = Partner.create(vals)
+        report.append(_('Partner auto-created from myDATA: %s', partner.display_name))
+        if is_greek:
+            report.append(self._l10n_gr_edi_enrich_partner_from_afm(partner))
+        return partner, report

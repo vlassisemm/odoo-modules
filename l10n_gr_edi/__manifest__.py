@@ -14,6 +14,7 @@
     'depends': ['l10n_gr'],
     'data': [
         'data/ir_cron.xml',
+        'data/l10n_gr_edi_fetch_data.xml',
         'data/template.xml',
         'security/ir.model.access.csv',
         'views/account_fiscal_position_views.xml',
