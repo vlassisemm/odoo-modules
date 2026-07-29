@@ -431,3 +431,59 @@ class ResCompany(models.Model):
                 'Document-level %(label)s %(amount).2f added as a separate line.',
                 label=label, amount=tax_total['tax_amount']))
         return commands, report
+
+    # ------------------------------------------------------------------
+    # Bill header
+    # ------------------------------------------------------------------
+
+    def _l10n_gr_edi_prepare_bill_vals(self, inv, partner):
+        self.ensure_one()
+        header = inv['header']
+        commands, report = self._l10n_gr_edi_prepare_line_vals(inv)
+        move_type = ('in_refund' if header['invoice_type'] in CREDIT_INVOICE_TYPES
+                     else 'in_invoice')
+        series = header['series']
+        ref = (header['aa'] if not series or series == '0'
+               else f"{series}/{header['aa']}")
+        vals = {
+            'move_type': move_type,
+            'company_id': self.id,
+            'partner_id': partner.id,
+            'invoice_date': fields.Date.to_date(header['issue_date']),
+            'date': fields.Date.to_date(header['issue_date']),
+            'ref': ref,
+            'invoice_line_ids': commands,
+            'l10n_gr_edi_is_fetched': True,
+        }
+        if header['invoice_type'] in INVOICE_TYPES_HAVE_EXPENSE:
+            vals['l10n_gr_edi_inv_type'] = header['invoice_type']
+        currency_code = header['currency']
+        if currency_code and currency_code != 'EUR':
+            currency = self.env['res.currency'].search(
+                [('name', '=', currency_code)], limit=1)
+            if currency:
+                vals['currency_id'] = currency.id
+                if header['exchange_rate']:
+                    report['lines'].append(_(
+                        'Document currency %(code)s (exchange rate to EUR: %(rate)s).',
+                        code=currency_code, rate=header['exchange_rate']))
+            else:
+                report['warnings'].append(_(
+                    'Unknown or inactive currency %(code)s — amounts recorded in '
+                    'company currency, totals may be wrong.', code=currency_code))
+        if move_type == 'in_refund' and header['correlated_marks']:
+            original = self.env['account.move'].sudo().search([
+                ('l10n_gr_edi_mark', 'in', header['correlated_marks']),
+                ('company_id', '=', self.id),
+            ], limit=1)
+            if original:
+                vals['reversed_entry_id'] = original.id
+                report['lines'].append(_(
+                    'Credit note linked to %(name)s (MARK %(mark)s).',
+                    name=original.display_name, mark=original.l10n_gr_edi_mark))
+            else:
+                report['warnings'].append(_(
+                    'Correlated invoice MARK(s) %(marks)s not found in Odoo — '
+                    'credit note left unlinked.',
+                    marks=', '.join(header['correlated_marks'])))
+        return vals, report

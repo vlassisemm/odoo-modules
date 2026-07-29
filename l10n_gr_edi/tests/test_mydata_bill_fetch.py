@@ -414,3 +414,72 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         vals = self._created_vals(commands)[0]
         self.assertEqual(vals['tax_ids'], [Command.set([])])
         self.assertFalse(report['warnings'])
+
+
+class TestMyDataFetchBillVals(TestMyDataFetchCommon):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.partner = cls.env['res.partner'].create({
+            'name': 'Vendor X', 'vat': 'EL123456789', 'is_company': True,
+        })
+
+    def _inv(self, **kw):
+        content = _requested_doc(_invoice_xml(**kw))
+        return self.company._l10n_gr_edi_parse_requested_docs(content)['invoices'][0]
+
+    def test_header_basics(self):
+        vals, _report = self.company._l10n_gr_edi_prepare_bill_vals(self._inv(), self.partner)
+        self.assertEqual(vals['move_type'], 'in_invoice')
+        self.assertEqual(vals['ref'], 'A/101')
+        self.assertEqual(str(vals['invoice_date']), '2026-07-01')
+        self.assertEqual(vals['partner_id'], self.partner.id)
+        self.assertEqual(vals['company_id'], self.company.id)
+        self.assertTrue(vals['l10n_gr_edi_is_fetched'])
+        self.assertEqual(vals['l10n_gr_edi_inv_type'], '2.1')
+
+    def test_series_zero_collapses_ref(self):
+        vals, _report = self.company._l10n_gr_edi_prepare_bill_vals(
+            self._inv(series='0'), self.partner)
+        self.assertEqual(vals['ref'], '101')
+
+    def test_credit_invoice_becomes_refund_and_links_original(self):
+        original = self.env['account.move'].create({
+            'move_type': 'in_invoice', 'partner_id': self.partner.id,
+            'invoice_date': '2026-06-01', 'company_id': self.company.id,
+        })
+        self.env['l10n_gr_edi.document'].create({
+            'state': 'bill_fetched', 'move_id': original.id,
+            'mydata_mark': '400001111111111',
+        })
+        vals, report = self.company._l10n_gr_edi_prepare_bill_vals(
+            self._inv(inv_type='5.1',
+                      header_extra='<inv:correlatedInvoices>400001111111111</inv:correlatedInvoices>'),
+            self.partner)
+        self.assertEqual(vals['move_type'], 'in_refund')
+        self.assertEqual(vals['reversed_entry_id'], original.id)
+
+    def test_orphan_correlated_mark_warns(self):
+        vals, report = self.company._l10n_gr_edi_prepare_bill_vals(
+            self._inv(inv_type='5.1',
+                      header_extra='<inv:correlatedInvoices>400002222222222</inv:correlatedInvoices>'),
+            self.partner)
+        self.assertEqual(vals['move_type'], 'in_refund')
+        self.assertNotIn('reversed_entry_id', vals)
+        self.assertTrue(any('400002222222222' in w for w in report['warnings']))
+
+    def test_foreign_currency_set(self):
+        self.env['res.currency'].search([('name', '=', 'USD')]).active = True
+        vals, _report = self.company._l10n_gr_edi_prepare_bill_vals(
+            self._inv(header_extra='<inv:currency>USD</inv:currency>'
+                                   '<inv:exchangeRate>1.08000</inv:exchangeRate>'),
+            self.partner)
+        usd = self.env['res.currency'].search([('name', '=', 'USD')])
+        self.assertEqual(vals['currency_id'], usd.id)
+
+    def test_unknown_currency_warns(self):
+        vals, report = self.company._l10n_gr_edi_prepare_bill_vals(
+            self._inv(header_extra='<inv:currency>XXX</inv:currency>'), self.partner)
+        self.assertNotIn('currency_id', vals)
+        self.assertTrue(any('XXX' in w for w in report['warnings']))

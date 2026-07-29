@@ -86,6 +86,12 @@ class AccountMove(models.Model):
         compute='_compute_from_l10n_gr_edi_document_ids',
         store=True,
     )
+    l10n_gr_edi_is_fetched = fields.Boolean(
+        string='Fetched from myDATA',
+        default=False,
+        copy=False,
+        help='Set on vendor bills automatically created from myDATA RequestDocs.',
+    )
 
     def _auto_init(self):
         """
@@ -98,6 +104,7 @@ class AccountMove(models.Model):
             ('l10n_gr_edi_inv_type', 'varchar'),
             ('l10n_gr_edi_payment_method', 'varchar'),
             ('l10n_gr_edi_attachment_id', 'int4'),
+            ('l10n_gr_edi_is_fetched', 'bool'),
         ):
             if not column_exists(self.env.cr, 'account_move', column_name):
                 create_column(self.env.cr, 'account_move', column_name, column_type)

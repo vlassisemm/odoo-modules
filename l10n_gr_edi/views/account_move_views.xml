@@ -153,6 +153,8 @@
                         domain="[('l10n_gr_edi_state', 'in', (False, 'bill_fetched'))]"/>
                 <filter string="Sent to myDATA" name="l10n_gr_edi_state_sent"
                         domain="[('l10n_gr_edi_state', '=', 'invoice_sent')]"/>
+                <filter string="Fetched from myDATA" name="l10n_gr_edi_is_fetched"
+                        domain="[('l10n_gr_edi_is_fetched', '=', True)]"/>
             </xpath>
             <xpath expr="//group" position="inside">
                 <filter string="myDATA Status" name="l10n_gr_edi_state_group"
