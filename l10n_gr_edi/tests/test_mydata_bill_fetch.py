@@ -1,8 +1,11 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 from unittest.mock import patch
 
+import requests
+
 from odoo import Command, _
 from odoo.addons.account.tests.common import AccountTestInvoicingCommon
+from odoo.addons.l10n_gr_edi.models.res_company_fetch import FETCH_DEFAULT_TIMEOUT
 from odoo.tests import tagged
 
 
@@ -651,6 +654,10 @@ class TestMyDataFetchFlow(TestMyDataFetchCommon):
         with patch(
             'odoo.addons.l10n_gr_edi.models.res_company_fetch.http_requests.Session'
         ) as session_cls:
+            # Session is used as a context manager (`with Session() as session:`);
+            # make the mock's `__enter__` return the same object so `.get` is reachable.
+            session_cls.return_value.__enter__.return_value = session_cls.return_value
+            session_cls.return_value.__exit__.return_value = False
             session_cls.return_value.get.side_effect = fake_get
             self.env['res.company']._cron_l10n_gr_edi_fetch_invoices()
         return calls
@@ -751,3 +758,60 @@ class TestMyDataFetchFlow(TestMyDataFetchCommon):
             '<cancellationDate>2026-07-10</cancellationDate>'
             '</cancelledInvoicesDoc>')])
         self.assertEqual(move.state, 'cancel')
+
+    def test_cron_empty_continuation_token_does_not_loop(self):
+        # A <continuationToken/> element with no (or empty) child text must
+        # not be treated as a real continuation - the loop must stop after
+        # one page. Only one page is supplied here: if the guard is missing,
+        # the fetch loop asks for a second page and the test errors out
+        # trying to pop a response that doesn't exist.
+        page = _requested_doc(_invoice_xml() + '<continuationToken/>')
+        calls = self._run_cron_with_pages([page])
+        self.assertEqual(len(calls), 1)
+        move = self.env['account.move'].search([
+            ('l10n_gr_edi_mark', '=', '400001234567890'),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertEqual(len(move), 1)
+
+    def test_cron_cancellation_failure_does_not_lose_bill_or_escape(self):
+        # A broken cancellation pass for one company must not roll back that
+        # company's already-created bills or its watermark advance, and must
+        # not escape and abort the cron for other companies.
+        Company = self.env['res.company']
+        with patch.object(
+            Company.__class__, '_l10n_gr_edi_process_cancellations',
+            side_effect=Exception('boom'),
+        ):
+            self._run_cron_with_pages([_requested_doc(_invoice_xml())])
+        move = self.env['account.move'].search([
+            ('l10n_gr_edi_mark', '=', '400001234567890'),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertEqual(len(move), 1)
+        self.assertEqual(self.company.l10n_gr_edi_fetch_mark, '400001234567890')
+
+    def test_cron_http_error_isolates_company_no_bills_created(self):
+        class _FailingResponse:
+            def raise_for_status(self):
+                raise requests.RequestException('network down')
+
+        with patch(
+            'odoo.addons.l10n_gr_edi.models.res_company_fetch.http_requests.Session'
+        ) as session_cls:
+            session_cls.return_value.__enter__.return_value = session_cls.return_value
+            session_cls.return_value.__exit__.return_value = False
+            session_cls.return_value.get.return_value = _FailingResponse()
+            # must not raise
+            self.env['res.company']._cron_l10n_gr_edi_fetch_invoices()
+        bills = self.env['account.move'].search([
+            ('l10n_gr_edi_is_fetched', '=', True),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertFalse(bills)
+
+    def test_cron_malformed_timeout_param_falls_back_to_default(self):
+        self.env['ir.config_parameter'].sudo().set_param(
+            'l10n_gr_edi.fetch_timeout', 'not-a-number')
+        calls = self._run_cron_with_pages([_requested_doc('')])
+        self.assertEqual(calls[0]['timeout'], FETCH_DEFAULT_TIMEOUT)

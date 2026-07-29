@@ -215,6 +215,10 @@ class ResCompany(models.Model):
                 'nextPartitionKey': _el_text(token_el, '{*}nextPartitionKey'),
                 'nextRowKey': _el_text(token_el, '{*}nextRowKey'),
             }
+            if not any(continuation.values()):
+                # An empty/childless <continuationToken/> is not a real
+                # continuation - treat it the same as no token at all.
+                continuation = None
         marks = (
             [int(inv['mark']) for inv in invoices if inv['mark']]
             + [int(c['cancellation_mark']) for c in cancellations if c['cancellation_mark']]
@@ -626,8 +630,11 @@ class ResCompany(models.Model):
         {'invoices': [...], 'cancellations': [...], 'max_mark': int}."""
         self.ensure_one()
         url = FETCH_URL_DEV if self.l10n_gr_edi_test_env else FETCH_URL_PROD
-        timeout = int(self.env['ir.config_parameter'].sudo().get_param(
-            'l10n_gr_edi.fetch_timeout', FETCH_DEFAULT_TIMEOUT))
+        try:
+            timeout = int(self.env['ir.config_parameter'].sudo().get_param(
+                'l10n_gr_edi.fetch_timeout', FETCH_DEFAULT_TIMEOUT))
+        except (ValueError, TypeError):
+            timeout = FETCH_DEFAULT_TIMEOUT
         headers = {
             'aade-user-id': self.l10n_gr_edi_aade_id,
             'ocp-apim-subscription-key': self.l10n_gr_edi_aade_key,
@@ -649,8 +656,9 @@ class ResCompany(models.Model):
                 return result
             params = dict(params, **parsed['continuation'])
         _logger.error(
-            "myDATA fetch: page cap (%s) reached for company %s — remaining documents "
-            "will be fetched on the next cron run.", FETCH_MAX_PAGES, self.name)
+            "myDATA fetch: page cap (%s) reached for company %s — some documents may "
+            "have been skipped. Clear the fetch watermark to refetch the window.",
+            FETCH_MAX_PAGES, self.name)
         return result
 
     def _l10n_gr_edi_create_bill(self, inv):
@@ -688,23 +696,29 @@ class ResCompany(models.Model):
             ('l10n_gr_edi_aade_id', '!=', False),
             ('l10n_gr_edi_aade_key', '!=', False),
         ])
-        session = http_requests.Session()
-        for company in gr_companies:
-            try:
-                docs = company._l10n_gr_edi_fetch_docs(session)
-            except (http_requests.RequestException, etree.XMLSyntaxError, ValueError) as error:
-                _logger.error("myDATA fetch failed for company %s: %s",
-                              company.name, error)
-                continue
-            for inv in docs['invoices']:
+        with http_requests.Session() as session:
+            for company in gr_companies:
+                try:
+                    docs = company._l10n_gr_edi_fetch_docs(session)
+                except (http_requests.RequestException, etree.XMLSyntaxError, ValueError) as error:
+                    _logger.error("myDATA fetch failed for company %s: %s",
+                                  company.name, error)
+                    continue
+                for inv in docs['invoices']:
+                    try:
+                        with self.env.cr.savepoint():
+                            company._l10n_gr_edi_create_bill(inv)
+                    except Exception:  # noqa: BLE001 - isolate per-invoice failures
+                        _logger.exception(
+                            "myDATA fetch: failed to create bill for MARK %s "
+                            "(company %s); payload: %r",
+                            inv.get('mark'), company.name, inv)
                 try:
                     with self.env.cr.savepoint():
-                        company._l10n_gr_edi_create_bill(inv)
-                except Exception:  # noqa: BLE001 - isolate per-invoice failures
+                        company._l10n_gr_edi_process_cancellations(docs['cancellations'])
+                except Exception:  # noqa: BLE001 - isolate per-company failures
                     _logger.exception(
-                        "myDATA fetch: failed to create bill for MARK %s "
-                        "(company %s); payload: %r",
-                        inv.get('mark'), company.name, inv)
-            company._l10n_gr_edi_process_cancellations(docs['cancellations'])
-            if docs['max_mark'] > int(company.l10n_gr_edi_fetch_mark or 0):
-                company.sudo().l10n_gr_edi_fetch_mark = str(docs['max_mark'])
+                        "myDATA fetch: failed to process cancellations for company %s",
+                        company.name)
+                if docs['max_mark'] > int(company.l10n_gr_edi_fetch_mark or 0):
+                    company.sudo().l10n_gr_edi_fetch_mark = str(docs['max_mark'])
