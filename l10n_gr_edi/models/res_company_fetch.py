@@ -5,6 +5,11 @@ import requests as http_requests
 from lxml import etree
 
 from odoo import _, api, fields, models, Command
+from odoo.tools import float_compare
+from odoo.addons.l10n_gr_edi.models.preferred_classification import (
+    INVOICE_TYPES_HAVE_EXPENSE,
+    TAX_EXEMPTION_CATEGORY_SELECTION,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -34,6 +39,19 @@ OTHER_TAXES_PERCENT = {
 }
 
 CREDIT_INVOICE_TYPES = ('5.1', '5.2')
+
+# (amount_key, category_key, percent_table, label_key, sign) — sign -1 reduces the payable
+LINE_CHARGES = (
+    ('withheld_amount', 'withheld_percent_category', WITHHELD_PERCENT, 'withheld', -1),
+    ('fees_amount', 'fees_percent_category', FEES_PERCENT, 'fees', 1),
+    ('stamp_duty_amount', 'stamp_duty_percent_category', STAMP_DUTY_PERCENT, 'stamp_duty', 1),
+    ('other_taxes_amount', 'other_taxes_percent_category', OTHER_TAXES_PERCENT, 'other_taxes', 1),
+    ('deductions_amount', None, None, 'deductions', -1),
+)
+TAX_TOTALS_SPEC = {
+    1: ('withheld', -1), 2: ('fees', 1), 3: ('other_taxes', 1),
+    4: ('stamp_duty', 1), 5: ('deductions', -1),
+}
 
 
 def _el_text(element, path):
@@ -275,3 +293,138 @@ class ResCompany(models.Model):
         if is_greek:
             report.append(self._l10n_gr_edi_enrich_partner_from_afm(partner))
         return partner, report
+
+    # ------------------------------------------------------------------
+    # Line building
+    # ------------------------------------------------------------------
+
+    @api.model
+    def _l10n_gr_edi_charge_label(self, key):
+        return {
+            'withheld': _('Withheld tax'),
+            'fees': _('Fees'),
+            'stamp_duty': _('Stamp duty'),
+            'other_taxes': _('Other taxes'),
+            'deductions': _('Deductions'),
+        }[key]
+
+    def _l10n_gr_edi_match_purchase_tax(self, percent):
+        self.ensure_one()
+        return self.env['account.tax'].search([
+            ('company_id', '=', self.id),
+            ('type_tax_use', '=', 'purchase'),
+            ('amount_type', '=', 'percent'),
+            ('amount', '=', percent),
+        ], limit=1)
+
+    def _l10n_gr_edi_prepare_line_vals(self, inv):
+        """Map payload lines to account.move.line create-commands.
+        Invariant: every payload amount lands in a matched tax or an explicit
+        fallback line, so the bill total always reconciles with the payload."""
+        self.ensure_one()
+        commands = []
+        report = {'lines': [], 'warnings': []}
+        for line in inv['lines']:
+            number = line['line_number']
+            sign = -1.0 if line['rec_type'] == 7 else 1.0
+            descr = line['item_descr'] or line['line_comments']
+            if not descr:
+                if line['rec_type'] == 2:
+                    descr = _('Fees')
+                elif line['rec_type'] == 3:
+                    descr = _('Other taxes')
+                else:
+                    descr = _('myDATA line %s', number)
+            if line['item_code']:
+                descr = f"[{line['item_code']}] {descr}"
+
+            quantity = line['quantity'] or 1.0
+            net_value = line['net_value']
+            price_unit = round(net_value / quantity, 2)
+            if quantity != 1.0 and float_compare(
+                    price_unit * quantity, net_value, precision_digits=2) != 0:
+                descr = _('%(descr)s (original quantity: %(qty)s)',
+                          descr=descr, qty=quantity)
+                quantity, price_unit = 1.0, net_value
+
+            tax_ids = []
+            vat_pct = VAT_CATEGORY_PERCENT.get(line['vat_category'])
+            if line['vat_category'] == 8:
+                pass  # entries without VAT
+            elif vat_pct is None:
+                report['warnings'].append(_(
+                    'Line %(n)s: unknown VAT category %(cat)s — no VAT applied.',
+                    n=number, cat=line['vat_category']))
+            else:
+                vat_tax = self._l10n_gr_edi_match_purchase_tax(vat_pct)
+                if vat_tax:
+                    tax_ids.append(vat_tax.id)
+                    report['lines'].append(_(
+                        'Line %(n)s: VAT %(pct)s%% mapped to tax "%(tax)s".',
+                        n=number, pct=vat_pct, tax=vat_tax.name))
+                elif line['vat_amount']:
+                    commands.append(Command.create({
+                        'name': _('VAT %(pct)s%% (no matching purchase tax) — line %(n)s',
+                                  pct=vat_pct, n=number),
+                        'quantity': 1.0,
+                        'price_unit': sign * line['vat_amount'],
+                        'tax_ids': [Command.set([])],
+                    }))
+                    report['warnings'].append(_(
+                        'Line %(n)s: no %(pct)s%% purchase tax found — '
+                        'VAT amount added as a separate line.', n=number, pct=vat_pct))
+                if line['vat_exemption_category']:
+                    label = dict(TAX_EXEMPTION_CATEGORY_SELECTION).get(
+                        str(line['vat_exemption_category']),
+                        str(line['vat_exemption_category']))
+                    report['lines'].append(_(
+                        'Line %(n)s: VAT exemption category — %(label)s.',
+                        n=number, label=label))
+
+            for amount_key, category_key, table, label_key, charge_sign in LINE_CHARGES:
+                amount = line.get(amount_key)
+                if not amount:
+                    continue
+                label = self._l10n_gr_edi_charge_label(label_key)
+                category = line.get(category_key) if category_key else None
+                pct = table.get(category) if (table and category) else None
+                charge_tax = (self._l10n_gr_edi_match_purchase_tax(charge_sign * pct)
+                              if pct else self.env['account.tax'])
+                if charge_tax:
+                    tax_ids.append(charge_tax.id)
+                    report['lines'].append(_(
+                        'Line %(n)s: %(label)s %(pct)s%% mapped to tax "%(tax)s".',
+                        n=number, label=label, pct=pct, tax=charge_tax.name))
+                else:
+                    commands.append(Command.create({
+                        'name': _('%(label)s (myDATA category %(cat)s) — line %(n)s',
+                                  label=label, cat=category or '-', n=number),
+                        'quantity': 1.0,
+                        'price_unit': sign * charge_sign * amount,
+                        'tax_ids': [Command.set([])],
+                    }))
+                    report['lines'].append(_(
+                        'Line %(n)s: %(label)s %(amount).2f added as a separate line '
+                        '(no matching tax).', n=number, label=label, amount=amount))
+
+            commands.append(Command.create({
+                'name': descr,
+                'quantity': quantity,
+                'price_unit': sign * price_unit,
+                'tax_ids': [Command.set(tax_ids)],
+            }))
+
+        for tax_total in inv['taxes_totals']:
+            label_key, t_sign = TAX_TOTALS_SPEC.get(tax_total['tax_type'], ('other_taxes', 1))
+            label = self._l10n_gr_edi_charge_label(label_key)
+            commands.append(Command.create({
+                'name': _('%(label)s (document level, myDATA category %(cat)s)',
+                          label=label, cat=tax_total['tax_category'] or '-'),
+                'quantity': 1.0,
+                'price_unit': t_sign * tax_total['tax_amount'],
+                'tax_ids': [Command.set([])],
+            }))
+            report['lines'].append(_(
+                'Document-level %(label)s %(amount).2f added as a separate line.',
+                label=label, amount=tax_total['tax_amount']))
+        return commands, report

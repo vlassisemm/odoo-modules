@@ -268,3 +268,146 @@ class TestMyDataFetchPartner(TestMyDataFetchCommon):
         self.assertIn('123456789', partner.name)
         self.assertTrue(any('skipped' in line.lower() or 'not installed' in line.lower()
                             for line in report))
+
+
+class TestMyDataFetchLines(TestMyDataFetchCommon):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.tax_p24 = cls._find_or_create_purchase_tax(24.0)
+        cls.withholding_20 = cls._find_or_create_purchase_tax(-20.0)
+
+    def _line(self, **overrides):
+        line = {
+            'line_number': 1, 'rec_type': None, 'quantity': None, 'net_value': 1000.0,
+            'vat_category': 1, 'vat_amount': 240.0, 'vat_exemption_category': None,
+            'item_descr': None, 'item_code': None, 'line_comments': None,
+            'withheld_amount': None, 'withheld_percent_category': None,
+            'fees_amount': None, 'fees_percent_category': None,
+            'stamp_duty_amount': None, 'stamp_duty_percent_category': None,
+            'other_taxes_amount': None, 'other_taxes_percent_category': None,
+            'deductions_amount': None,
+        }
+        line.update(overrides)
+        return line
+
+    def _inv(self, lines=None, taxes_totals=None):
+        return {'lines': lines or [self._line()], 'taxes_totals': taxes_totals or []}
+
+    def _created_vals(self, commands):
+        return [cmd[2] for cmd in commands]
+
+    def test_description_chain_and_item_code(self):
+        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(item_descr='Widget', item_code='W-1'),
+            self._line(line_number=2, line_comments='Comment only'),
+            self._line(line_number=3),
+        ]))
+        names = [vals['name'] for vals in self._created_vals(commands)]
+        self.assertEqual(names[0], '[W-1] Widget')
+        self.assertEqual(names[1], 'Comment only')
+        self.assertIn('3', names[2])  # generic "myDATA line 3" fallback
+
+    def test_vat_tax_matched(self):
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv())
+        vals = self._created_vals(commands)[0]
+        self.assertEqual(vals['tax_ids'], [Command.set([self.tax_p24.id])])
+        self.assertEqual(vals['price_unit'], 1000.0)
+        self.assertFalse(report['warnings'])
+
+    def test_vat_category_9_and_10_no_crash(self):
+        tax_p3 = self._find_or_create_purchase_tax(3.0)
+        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(vat_category=9, vat_amount=30.0),
+            self._line(line_number=2, vat_category=10, vat_amount=40.0),
+        ]))
+        vals = self._created_vals(commands)
+        self.assertEqual(vals[0]['tax_ids'], [Command.set([tax_p3.id])])
+
+    def test_vat_fallback_line_when_no_tax(self):
+        # 17% (Aegean islands rate) purchase tax does not exist in the CoA
+        self.env['account.tax'].search([
+            ('company_id', '=', self.company.id), ('amount', '=', 17.0),
+            ('type_tax_use', '=', 'purchase'),
+        ]).unlink()
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(vat_category=4, vat_amount=170.0),
+        ]))
+        vals = self._created_vals(commands)
+        self.assertEqual(len(vals), 2)
+        fallback = [v for v in vals if 'VAT' in v['name']][0]
+        self.assertEqual(fallback['price_unit'], 170.0)
+        self.assertTrue(report['warnings'])
+
+    def test_withholding_matched_to_negative_tax(self):
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(withheld_amount=200.0, withheld_percent_category=3),  # 20%
+        ]))
+        vals = self._created_vals(commands)
+        self.assertEqual(len(vals), 1)
+        self.assertEqual(vals[0]['tax_ids'],
+                         [Command.set([self.tax_p24.id, self.withholding_20.id])])
+
+    def test_withholding_fallback_line_when_amount_based(self):
+        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(withheld_amount=50.0, withheld_percent_category=17),  # amount-based
+        ]))
+        vals = self._created_vals(commands)
+        self.assertEqual(len(vals), 2)
+        fallback = [v for v in vals if v['price_unit'] < 0][0]
+        self.assertEqual(fallback['price_unit'], -50.0)
+
+    def test_stamp_duty_fallback_positive(self):
+        # no 1.2% purchase tax in CoA -> explicit positive line
+        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(stamp_duty_amount=12.0, stamp_duty_percent_category=1),
+        ]))
+        vals = self._created_vals(commands)
+        fallback = [v for v in vals if 'tamp' in v['name']]
+        self.assertEqual(len(fallback), 1)
+        self.assertEqual(fallback[0]['price_unit'], 12.0)
+
+    def test_quantity_kept_when_division_exact(self):
+        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(quantity=4.0, net_value=100.0),
+        ]))
+        vals = self._created_vals(commands)[0]
+        self.assertEqual(vals['quantity'], 4.0)
+        self.assertEqual(vals['price_unit'], 25.0)
+
+    def test_quantity_collapsed_when_division_drifts(self):
+        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(quantity=3.0, net_value=100.0),
+        ]))
+        vals = self._created_vals(commands)[0]
+        self.assertEqual(vals['quantity'], 1.0)
+        self.assertEqual(vals['price_unit'], 100.0)
+        self.assertIn('3', vals['name'])
+
+    def test_taxes_totals_document_level_lines(self):
+        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv(
+            taxes_totals=[
+                {'tax_type': 1, 'tax_category': 3, 'underlying_value': 1000.0, 'tax_amount': 200.0},
+                {'tax_type': 4, 'tax_category': 1, 'underlying_value': None, 'tax_amount': 12.0},
+            ],
+        ))
+        vals = self._created_vals(commands)
+        self.assertEqual(len(vals), 3)  # 1 product line + 2 doc-level charge lines
+        self.assertEqual(vals[1]['price_unit'], -200.0)  # withheld: negative
+        self.assertEqual(vals[2]['price_unit'], 12.0)    # stamp duty: positive
+
+    def test_rec_type_7_negates(self):
+        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(rec_type=7, net_value=100.0, vat_category=8, vat_amount=0.0),
+        ]))
+        vals = self._created_vals(commands)[0]
+        self.assertEqual(vals['price_unit'], -100.0)
+
+    def test_vat_category_8_no_tax(self):
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(vat_category=8, vat_amount=0.0),
+        ]))
+        vals = self._created_vals(commands)[0]
+        self.assertEqual(vals['tax_ids'], [Command.set([])])
+        self.assertFalse(report['warnings'])
