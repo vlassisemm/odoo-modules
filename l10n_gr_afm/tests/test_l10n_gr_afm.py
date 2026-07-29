@@ -289,6 +289,19 @@ class TestL10nGrAfmFetchAction(TransactionCase):
         with self.assertRaises(UserError):
             self.partner.action_l10n_gr_afm_fetch()
 
+    @patch('odoo.addons.l10n_gr_afm.models.res_partner.http_requests.post')
+    def test_fetch_error_log_redacts_afm(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_post.return_value = mock_response
+
+        with self.assertLogs(
+            'odoo.addons.l10n_gr_afm.models.res_partner',
+            level='WARNING',
+        ) as captured, self.assertRaises(UserError):
+            self.partner.action_l10n_gr_afm_fetch()
+        self.assertNotIn('090165560', '\n'.join(captured.output))
+
 
 @tagged('post_install', '-at_install', 'l10n_gr_afm')
 class TestL10nGrAfmWizardApply(TransactionCase):

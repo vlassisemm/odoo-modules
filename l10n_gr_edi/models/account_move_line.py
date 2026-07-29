@@ -18,6 +18,14 @@ class AccountMoveLine(models.Model):
     l10n_gr_edi_available_cls_type = fields.Char(compute='_compute_l10n_gr_edi_available_cls_type')
     l10n_gr_edi_available_cls_vat = fields.Char(compute='_compute_l10n_gr_edi_available_cls_type')
     l10n_gr_edi_need_exemption_category = fields.Boolean(compute='_compute_l10n_gr_edi_need_exemption_category', default=False)
+    l10n_gr_edi_is_fetch_adjustment = fields.Boolean(
+        string='myDATA Fetch Adjustment',
+        copy=False,
+    )
+    l10n_gr_edi_source_line_number = fields.Integer(
+        string='myDATA Source Line Number',
+        copy=False,
+    )
 
     l10n_gr_edi_detail_type = fields.Selection(
         selection=[('1', '1'), ('2', '2')],
@@ -65,6 +73,8 @@ class AccountMoveLine(models.Model):
             ('l10n_gr_edi_cls_type', 'varchar'),
             ('l10n_gr_edi_cls_vat', 'varchar'),
             ('l10n_gr_edi_tax_exemption_category', 'varchar'),
+            ('l10n_gr_edi_is_fetch_adjustment', 'bool'),
+            ('l10n_gr_edi_source_line_number', 'int4'),
         ):
             if not column_exists(self.env.cr, 'account_move_line', column_name):
                 create_column(self.env.cr, 'account_move_line', column_name, column_type)
@@ -205,10 +215,22 @@ class AccountMoveLine(models.Model):
             taxes = line.tax_ids.flatten_taxes_hierarchy()
             line.l10n_gr_edi_need_exemption_category = len(taxes) == 1 and taxes.amount == 0
 
-    @api.depends('tax_ids')
+    @api.depends(
+        'tax_ids',
+        'move_id.l10n_gr_edi_is_fetched',
+        'l10n_gr_edi_is_fetch_adjustment',
+    )
     def _compute_l10n_gr_edi_tax_exemption_category(self):
         for line in self:
             taxes = line.tax_ids.flatten_taxes_hierarchy()
+            preserve_fetched_exemption = (
+                line.move_id.l10n_gr_edi_is_fetched
+                and not line.l10n_gr_edi_is_fetch_adjustment
+                and not taxes
+                and line.l10n_gr_edi_tax_exemption_category
+            )
+            if preserve_fetched_exemption:
+                continue
             if line.move_id.country_code == 'GR' and len(taxes) == 1 and taxes.amount == 0:
                 if line.l10n_gr_edi_tax_exemption_category:
                     line.l10n_gr_edi_tax_exemption_category = line.l10n_gr_edi_tax_exemption_category

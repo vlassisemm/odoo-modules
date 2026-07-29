@@ -6,6 +6,7 @@ import requests
 from odoo import Command, _
 from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.addons.l10n_gr_edi.models.res_company_fetch import FETCH_DEFAULT_TIMEOUT
+from odoo.exceptions import UserError
 from odoo.tests import tagged
 
 
@@ -216,6 +217,18 @@ class TestMyDataFetchParse(TestMyDataFetchCommon):
         result = self.company._l10n_gr_edi_parse_requested_docs(content)
         self.assertEqual(result['cancellations'], [])
 
+    def test_parse_classification_and_payment_event_marks(self):
+        content = _requested_doc(
+            '<expenseClassificationsDoc><expensesInvoiceClassification>'
+            '<classificationMark>400009999999998</classificationMark>'
+            '</expensesInvoiceClassification></expenseClassificationsDoc>'
+            '<paymentMethodsDoc><paymentMethod>'
+            '<paymentMethodMark>400009999999999</paymentMethodMark>'
+            '</paymentMethod></paymentMethodsDoc>'
+        )
+        result = self.company._l10n_gr_edi_parse_requested_docs(content)
+        self.assertEqual(result['max_mark'], 400009999999999)
+
     def test_parse_foreign_issuer_and_credit_header(self):
         content = _requested_doc(_invoice_xml(
             vat='DE811907980', country='DE',
@@ -331,6 +344,30 @@ class TestMyDataFetchPartner(TestMyDataFetchCommon):
         self.assertTrue(any('skipped' in line.lower() or 'not installed' in line.lower()
                             for line in report))
 
+    def test_enrichment_error_log_omits_exception_details(self):
+        Partner = self.env['res.partner']
+        if not hasattr(Partner, '_l10n_gr_afm_call_aade'):
+            self.skipTest('l10n_gr_afm not installed in this registry')
+        self.company.sudo().write({
+            'l10n_gr_afm_aade_username': 'u',
+            'l10n_gr_afm_aade_password': 'p',
+        })
+        sensitive_error = 'caller VAT 123456789 rejected'
+        with patch.object(
+            Partner.__class__,
+            '_l10n_gr_afm_call_aade',
+            side_effect=UserError(sensitive_error),
+        ), self.assertLogs(
+            'odoo.addons.l10n_gr_edi.models.res_company_fetch',
+            level='WARNING',
+        ) as captured:
+            self.company._l10n_gr_edi_resolve_partner(self._issuer())
+        logs = '\n'.join(captured.output)
+        self.assertNotIn(sensitive_error, logs)
+        self.assertIn('company_id=', logs)
+        self.assertIn('partner_id=', logs)
+        self.assertIn('error_type=UserError', logs)
+
 
 class TestMyDataFetchLines(TestMyDataFetchCommon):
 
@@ -339,6 +376,14 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         super().setUpClass()
         cls.tax_p24 = cls._find_or_create_purchase_tax(24.0)
         cls.withholding_20 = cls._find_or_create_purchase_tax(-20.0)
+        for tax in (cls.tax_p24, cls.withholding_20):
+            cls.env['account.tax'].search([
+                ('company_id', '=', cls.company.id),
+                ('type_tax_use', '=', 'purchase'),
+                ('amount_type', '=', 'percent'),
+                ('amount', '=', tax.amount),
+                ('id', '!=', tax.id),
+            ]).active = False
 
     def _line(self, **overrides):
         line = {
@@ -378,8 +423,36 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         self.assertEqual(vals['price_unit'], 1000.0)
         self.assertFalse(report['warnings'])
 
+    def test_ambiguous_vat_tax_falls_back_with_source_metadata(self):
+        self.env['account.tax'].create({
+            'name': 'Second purchase 24%',
+            'amount': 24.0,
+            'amount_type': 'percent',
+            'type_tax_use': 'purchase',
+            'company_id': self.company.id,
+        })
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(line_number=7, vat_exemption_category=2),
+        ]))
+        vals = self._created_vals(commands)
+        self.assertEqual(len(vals), 2)
+        source = next(vals for vals in vals if vals['price_unit'] == 1000.0)
+        adjustment = next(vals for vals in vals if vals['price_unit'] == 240.0)
+        self.assertEqual(source['tax_ids'], [Command.set([])])
+        self.assertEqual(source.get('l10n_gr_edi_source_line_number'), 7)
+        self.assertEqual(source.get('l10n_gr_edi_tax_exemption_category'), '2')
+        self.assertTrue(adjustment.get('l10n_gr_edi_is_fetch_adjustment'))
+        self.assertTrue(report['warnings'])
+
     def test_vat_category_9_and_10_no_crash(self):
         tax_p3 = self._find_or_create_purchase_tax(3.0)
+        self.env['account.tax'].search([
+            ('company_id', '=', self.company.id),
+            ('type_tax_use', '=', 'purchase'),
+            ('amount_type', '=', 'percent'),
+            ('amount', '=', 3.0),
+            ('id', '!=', tax_p3.id),
+        ]).active = False
         commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
             self._line(vat_category=9, vat_amount=30.0),
             self._line(line_number=2, vat_category=10, vat_amount=40.0),
@@ -400,6 +473,7 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         self.assertEqual(len(vals), 2)
         fallback = [v for v in vals if 'VAT' in v['name']][0]
         self.assertEqual(fallback['price_unit'], 170.0)
+        self.assertTrue(fallback.get('l10n_gr_edi_is_fetch_adjustment'))
         self.assertTrue(report['warnings'])
 
     def test_withholding_matched_to_negative_tax(self):
@@ -419,6 +493,7 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         self.assertEqual(len(vals), 2)
         fallback = [v for v in vals if v['price_unit'] < 0][0]
         self.assertEqual(fallback['price_unit'], -50.0)
+        self.assertTrue(fallback.get('l10n_gr_edi_is_fetch_adjustment'))
         self.assertTrue(report['warnings'])
 
     def test_stamp_duty_fallback_positive(self):
@@ -430,6 +505,7 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         fallback = [v for v in vals if 'tamp' in v['name']]
         self.assertEqual(len(fallback), 1)
         self.assertEqual(fallback[0]['price_unit'], 12.0)
+        self.assertTrue(fallback[0].get('l10n_gr_edi_is_fetch_adjustment'))
         self.assertTrue(report['warnings'])
 
     def test_other_taxes_percent_colliding_with_vat_rate_falls_back(self):
@@ -446,6 +522,7 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         fallback = [v for v in vals if 'ther taxes' in v['name']]
         self.assertEqual(len(fallback), 1)
         self.assertEqual(fallback[0]['price_unit'], 40.0)
+        self.assertTrue(fallback[0].get('l10n_gr_edi_is_fetch_adjustment'))
         self.assertTrue(report['warnings'])
 
     def test_quantity_kept_when_division_exact(self):
@@ -476,6 +553,8 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         self.assertEqual(len(vals), 3)  # 1 product line + 2 doc-level charge lines
         self.assertEqual(vals[1]['price_unit'], -200.0)  # withheld: negative
         self.assertEqual(vals[2]['price_unit'], 12.0)    # stamp duty: positive
+        self.assertTrue(vals[1].get('l10n_gr_edi_is_fetch_adjustment'))
+        self.assertTrue(vals[2].get('l10n_gr_edi_is_fetch_adjustment'))
         self.assertEqual(len(report['warnings']), 2)
 
     def test_rec_type_7_negates(self):
@@ -537,6 +616,7 @@ class TestMyDataFetchBillVals(TestMyDataFetchCommon):
             self.partner)
         self.assertEqual(vals['move_type'], 'in_refund')
         self.assertEqual(vals['reversed_entry_id'], original.id)
+        self.assertEqual(vals.get('l10n_gr_edi_correlation_id'), original.id)
 
     def test_orphan_correlated_mark_warns(self):
         vals, report = self.company._l10n_gr_edi_prepare_bill_vals(
@@ -555,6 +635,16 @@ class TestMyDataFetchBillVals(TestMyDataFetchCommon):
             self.partner)
         usd = self.env['res.currency'].search([('name', '=', 'USD')])
         self.assertEqual(vals['currency_id'], usd.id)
+        self.assertEqual(vals.get('invoice_currency_rate'), 1.08)
+
+    def test_foreign_currency_missing_exchange_rate_warns(self):
+        self.env['res.currency'].search([('name', '=', 'USD')]).active = True
+        vals, report = self.company._l10n_gr_edi_prepare_bill_vals(
+            self._inv(header_extra='<inv:currency>USD</inv:currency>'),
+            self.partner)
+        self.assertNotIn('invoice_currency_rate', vals)
+        self.assertTrue(any('exchange rate' in warning.lower()
+                            for warning in report['warnings']))
 
     def test_unknown_currency_warns(self):
         vals, report = self.company._l10n_gr_edi_prepare_bill_vals(
@@ -562,13 +652,120 @@ class TestMyDataFetchBillVals(TestMyDataFetchCommon):
         self.assertNotIn('currency_id', vals)
         self.assertTrue(any('XXX' in w for w in report['warnings']))
 
+    def test_eur_document_sets_currency_for_non_eur_company(self):
+        usd = self.env['res.currency'].search([('name', '=', 'USD')])
+        usd.active = True
+        usd_company = self.env['res.company'].create({
+            'name': 'USD Company',
+            'currency_id': usd.id,
+            'country_id': self.env.ref('base.gr').id,
+        })
+        eur = self.env['res.currency'].search([('name', '=', 'EUR')])
+        vals, report = usd_company._l10n_gr_edi_prepare_bill_vals(
+            self._inv(header_extra='<inv:currency>EUR</inv:currency>'), self.partner)
+        self.assertEqual(vals['currency_id'], eur.id)
+        self.assertNotIn('invoice_currency_rate', vals)
+        self.assertTrue(any('company currency is not EUR' in warning
+                            for warning in report['warnings']))
+
+    def test_company_currency_document_does_not_set_foreign_currency(self):
+        usd = self.env['res.currency'].search([('name', '=', 'USD')])
+        usd.active = True
+        usd_company = self.env['res.company'].create({
+            'name': 'USD Company',
+            'currency_id': usd.id,
+            'country_id': self.env.ref('base.gr').id,
+        })
+        vals, report = usd_company._l10n_gr_edi_prepare_bill_vals(
+            self._inv(header_extra='<inv:currency>USD</inv:currency>'), self.partner)
+        self.assertNotIn('currency_id', vals)
+        self.assertFalse(any('company currency is not EUR' in warning
+                             for warning in report['warnings']))
+
+    def test_fetched_line_preserves_source_vat_exemption(self):
+        lines_xml = (
+            '<inv:invoiceDetails><inv:lineNumber>7</inv:lineNumber>'
+            '<inv:netValue>100.00</inv:netValue>'
+            '<inv:vatCategory>7</inv:vatCategory><inv:vatAmount>0.00</inv:vatAmount>'
+            '<inv:vatExemptionCategory>2</inv:vatExemptionCategory>'
+            '</inv:invoiceDetails>'
+        )
+        vals, _report = self.company._l10n_gr_edi_prepare_bill_vals(
+            self._inv(lines_xml=lines_xml), self.partner)
+        move = self.env['account.move'].create(vals)
+        source_line = move.invoice_line_ids.filtered(
+            lambda line: line.l10n_gr_edi_source_line_number == 7)
+        source_line._compute_l10n_gr_edi_tax_exemption_category()
+        self.assertEqual(source_line.l10n_gr_edi_tax_exemption_category, '2')
+
+
+class TestMyDataFetchClassification(TestMyDataFetchCommon):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.partner = cls.env['res.partner'].create({
+            'name': 'Vendor X', 'vat': 'EL123456789', 'is_company': True,
+        })
+
+    def _make_fetched_bill_with_adjustment(self):
+        return self.env['account.move'].create({
+            'move_type': 'in_invoice',
+            'partner_id': self.partner.id,
+            'invoice_date': '2026-07-01',
+            'company_id': self.company.id,
+            'l10n_gr_edi_is_fetched': True,
+            'l10n_gr_edi_inv_type': '2.1',
+            'invoice_line_ids': [
+                Command.create({
+                    'name': 'VAT adjustment',
+                    'quantity': 1,
+                    'price_unit': 24.0,
+                    'tax_ids': [Command.set([])],
+                    'l10n_gr_edi_is_fetch_adjustment': True,
+                }),
+                Command.create({
+                    'name': 'Source line',
+                    'quantity': 1,
+                    'price_unit': 100.0,
+                    'tax_ids': [Command.set([])],
+                    'l10n_gr_edi_source_line_number': 7,
+                }),
+            ],
+        })
+
+    def test_expense_classification_excludes_adjustment_and_uses_source_number(self):
+        move = self._make_fetched_bill_with_adjustment()
+        xml_vals = move._l10n_gr_edi_get_expense_classification_xml_vals()
+        details = xml_vals['invoice_values_list'][0]['details']
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0]['line_number'], 7)
+
+    def test_fetched_lines_skip_outgoing_tax_structure_validation(self):
+        move = self._make_fetched_bill_with_adjustment()
+        errors = move._l10n_gr_edi_get_pre_error_dict()
+        tax_error_keys = [
+            key for key in errors
+            if any(token in key for token in (
+                'multi_tax', 'missing_tax', 'missing_tax_exempt', 'invalid_tax_amount',
+            ))
+        ]
+        self.assertEqual(tax_error_keys, [])
+
 
 class TestMyDataFetchNote(TestMyDataFetchCommon):
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls._find_or_create_purchase_tax(24.0)
+        tax = cls._find_or_create_purchase_tax(24.0)
+        cls.env['account.tax'].search([
+            ('company_id', '=', cls.company.id),
+            ('type_tax_use', '=', 'purchase'),
+            ('amount_type', '=', 'percent'),
+            ('amount', '=', 24.0),
+            ('id', '!=', tax.id),
+        ]).active = False
         cls.partner = cls.env['res.partner'].create({
             'name': 'Vendor X', 'vat': 'EL123456789', 'is_company': True,
         })
@@ -594,7 +791,7 @@ class TestMyDataFetchNote(TestMyDataFetchCommon):
         self.assertIn('9000.00', warnings[0])
         self.assertIn(f'{move.amount_total:.2f}', warnings[0])
 
-    def test_note_contains_sections(self):
+    def test_note_is_concise_and_contains_source_summary(self):
         move, inv, report = self._build_move(payments_xml=(
             '<inv:paymentMethods><inv:paymentMethodDetails>'
             '<inv:type>3</inv:type><inv:amount>1240.00</inv:amount>'
@@ -605,9 +802,24 @@ class TestMyDataFetchNote(TestMyDataFetchCommon):
         html = str(note)
         self.assertIn('400001234567890', html)   # MARK
         self.assertIn('2.1', html)               # invoice type
-        self.assertIn('Vendor X', html)          # partner section
-        self.assertIn('Cash', html)              # payment method label
-        self.assertNotIn('Warning', html)        # no warnings section when clean
+        self.assertIn('A/101', html)              # source reference
+        self.assertIn('2026-07-01', html)         # source date
+        self.assertIn('1240.00', html)            # declared gross total
+        self.assertIn('1', html)                  # source line count
+        self.assertNotIn('Vendor X', html)        # routine partner narration
+        self.assertNotIn('Cash', html)            # payment detail noise
+        self.assertNotIn('Mapping', html)         # routine mapping narration
+        self.assertNotIn('Warning', html)         # no warnings section when clean
+
+    def test_note_contains_only_actionable_mapping_warnings(self):
+        move, inv, report = self._build_move()
+        report['lines'] = ['Line 1 mapped successfully.']
+        report['warnings'] = ['Line 1 requires tax review.']
+        html = str(self.company._l10n_gr_edi_build_fetch_note(
+            inv, ['Partner matched by VAT: Vendor X'], report))
+        self.assertIn('requires tax review', html)
+        self.assertNotIn('mapped successfully', html)
+        self.assertNotIn('Partner matched', html)
 
     def test_note_shows_invoice_type_label(self):
         move, inv, report = self._build_move()
@@ -679,6 +891,14 @@ class TestMyDataFetchCancellations(TestMyDataFetchCommon):
         self.assertEqual(move.state, 'cancel')
         self.assertTrue(any('400009999999999' in (m.body or '')
                             for m in move.message_ids))
+
+    def test_manually_modified_draft_gets_activity_not_cancelled(self):
+        move = self._make_fetched_bill('400001234567006')
+        move.is_manually_modified = True
+        self.company._l10n_gr_edi_process_cancellations(
+            self._cancellation('400001234567006'))
+        self.assertEqual(move.state, 'draft')
+        self.assertTrue(move.activity_ids)
 
     def test_posted_bill_gets_activity_not_cancelled(self):
         move = self._make_fetched_bill('400001234567002')
@@ -889,7 +1109,28 @@ class TestMyDataFetchFlow(TestMyDataFetchCommon):
         ])
         self.assertEqual(len(bills), 1)
         self.assertEqual(bills.l10n_gr_edi_mark, '400001234567891')
-        self.assertEqual(self.company.l10n_gr_edi_fetch_mark, '400001234567891')
+        self.assertFalse(self.company.l10n_gr_edi_fetch_mark)
+
+    def test_cron_error_log_is_redacted_and_uses_operational_ids(self):
+        sensitive_vat = '987654321'
+        sensitive_name = 'Sensitive Supplier SA'
+        bad = _invoice_xml(
+            mark='400001234567890',
+            vat=sensitive_vat,
+            issuer_extra=f'<inv:name>{sensitive_name}</inv:name>',
+            issue_date='not-a-date',
+        )
+        logger_name = 'odoo.addons.l10n_gr_edi.models.res_company_fetch'
+        with self.assertLogs(logger_name, level='INFO') as captured:
+            self._run_cron_with_pages([_requested_doc(bad)])
+        output = '\n'.join(captured.output)
+        self.assertNotIn(sensitive_vat, output)
+        self.assertNotIn(sensitive_name, output)
+        self.assertNotIn("'issuer':", output)
+        self.assertIn(str(self.company.id), output)
+        self.assertIn('400001234567890', output)
+        self.assertTrue(any(record.levelname == 'ERROR'
+                            for record in captured.records))
 
     def test_cron_processes_cancellations(self):
         self._run_cron_with_pages([_requested_doc(_invoice_xml())])
@@ -919,10 +1160,25 @@ class TestMyDataFetchFlow(TestMyDataFetchCommon):
         ])
         self.assertEqual(len(move), 1)
 
+    def test_cron_page_cap_does_not_process_or_advance_watermark(self):
+        page = _requested_doc(
+            _invoice_xml()
+            + '<continuationToken><nextPartitionKey>PK</nextPartitionKey>'
+              '<nextRowKey>RK</nextRowKey></continuationToken>')
+        with patch(
+            'odoo.addons.l10n_gr_edi.models.res_company_fetch.FETCH_MAX_PAGES', 1
+        ):
+            self._run_cron_with_pages([page])
+        move = self.env['account.move'].search([
+            ('l10n_gr_edi_mark', '=', '400001234567890'),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertFalse(move)
+        self.assertFalse(self.company.l10n_gr_edi_fetch_mark)
+
     def test_cron_cancellation_failure_does_not_lose_bill_or_escape(self):
-        # A broken cancellation pass for one company must not roll back that
-        # company's already-created bills or its watermark advance, and must
-        # not escape and abort the cron for other companies.
+        # A broken cancellation pass keeps already-created bills but must not
+        # checkpoint past the unprocessed cancellation batch.
         Company = self.env['res.company']
         with patch.object(
             Company.__class__, '_l10n_gr_edi_process_cancellations',
@@ -934,7 +1190,7 @@ class TestMyDataFetchFlow(TestMyDataFetchCommon):
             ('company_id', '=', self.company.id),
         ])
         self.assertEqual(len(move), 1)
-        self.assertEqual(self.company.l10n_gr_edi_fetch_mark, '400001234567890')
+        self.assertFalse(self.company.l10n_gr_edi_fetch_mark)
 
     def test_cron_http_error_isolates_company_no_bills_created(self):
         class _FailingResponse:
@@ -954,6 +1210,27 @@ class TestMyDataFetchFlow(TestMyDataFetchCommon):
             ('company_id', '=', self.company.id),
         ])
         self.assertFalse(bills)
+
+    def test_cron_unexpected_fetch_error_isolated_with_traceback(self):
+        Company = self.env['res.company']
+        logger_name = 'odoo.addons.l10n_gr_edi.models.res_company_fetch'
+        with (
+            patch.object(
+                Company.__class__, '_l10n_gr_edi_fetch_docs',
+                side_effect=RuntimeError('unexpected fetch failure'),
+            ),
+            self.assertLogs(logger_name, level='ERROR') as captured,
+        ):
+            caught_error = None
+            try:
+                self.env['res.company']._cron_l10n_gr_edi_fetch_invoices()
+            except RuntimeError as error:
+                caught_error = error
+        self.assertIsNone(caught_error)
+        output = '\n'.join(captured.output)
+        self.assertIn(str(self.company.id), output)
+        self.assertIn('RuntimeError', output)
+        self.assertTrue(any(record.exc_info for record in captured.records))
 
     def test_cron_malformed_timeout_param_falls_back_to_default(self):
         self.env['ir.config_parameter'].sudo().set_param(

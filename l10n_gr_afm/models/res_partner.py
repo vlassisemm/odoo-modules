@@ -205,21 +205,23 @@ class ResPartner(models.Model):
                 timeout=timeout,
             )
         except http_requests.exceptions.RequestException:
-            _logger.warning("AADE AFM lookup failed for AFM %s", afm, exc_info=True)
+            _logger.warning('AADE AFM lookup failed', exc_info=True)
             raise UserError(_("Could not connect to AADE. Please try again later."))
 
         if response.status_code in (401, 403):
-            _logger.warning("AADE auth failed (HTTP %s) for AFM %s", response.status_code, afm)
+            _logger.warning(
+                'AADE authentication failed http_status=%s', response.status_code)
             raise UserError(
                 _("AADE authentication failed. Please check your credentials in Settings.")
             )
         if response.status_code >= 500:
-            _logger.warning("AADE server error (HTTP %s) for AFM %s", response.status_code, afm)
+            _logger.warning('AADE server error http_status=%s', response.status_code)
             raise UserError(
                 _("AADE service is temporarily unavailable. Please try again later.")
             )
         if response.status_code != 200:
-            _logger.warning("AADE unexpected HTTP %s for AFM %s", response.status_code, afm)
+            _logger.warning(
+                'AADE unexpected response http_status=%s', response.status_code)
             raise UserError(_("Unexpected response from AADE. Please contact support."))
 
         return self._l10n_gr_afm_parse_response(response.content)

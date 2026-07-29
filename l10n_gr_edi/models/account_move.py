@@ -574,10 +574,15 @@ class AccountMove(models.Model):
         for move in self:
             details = []
             base_lines, _tax_lines = move._get_rounded_base_and_tax_lines()
+            base_lines = [
+                base_line for base_line in base_lines
+                if not base_line['record'].l10n_gr_edi_is_fetch_adjustment
+            ]
 
             for line_no, base_line in enumerate(base_lines, start=1):
+                line = base_line['record']
                 details.append({
-                    'line_number': line_no,
+                    'line_number': line.l10n_gr_edi_source_line_number or line_no,
                     **self._l10n_gr_edi_common_base_line_details_values(base_line),
                 })
 
@@ -658,6 +663,8 @@ class AccountMove(models.Model):
         for line_no, line in enumerate(self.invoice_line_ids, start=1):
             if line.display_type in ('line_section', 'line_subsection', 'line_note'):
                 continue
+            if line.l10n_gr_edi_is_fetch_adjustment:
+                continue
             if move_disallow_classification and line.l10n_gr_edi_cls_category:
                 errors[f'l10n_gr_edi_{line_no}_forbidden_classification'] = {
                     'message': _('myDATA classification is not allowed on line %s.', line_no),
@@ -673,6 +680,8 @@ class AccountMove(models.Model):
                 errors[f'l10n_gr_edi_line_{line_no}_missing_cls_type'] = {
                     'message': _('Missing myDATA classification type on line %s.', line_no),
                 }
+            if self.l10n_gr_edi_is_fetched:
+                continue
             taxes = line.tax_ids.flatten_taxes_hierarchy()
             if len(taxes) > 1:
                 errors[f'l10n_gr_edi_line_{line_no}_multi_tax'] = {

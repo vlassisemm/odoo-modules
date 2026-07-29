@@ -219,6 +219,12 @@ class ResCompany(models.Model):
             [int(inv['mark']) for inv in invoices if inv['mark']]
             + [int(c['cancellation_mark']) for c in cancellations if c['cancellation_mark']]
         )
+        for tag in ('classificationMark', 'paymentMethodMark'):
+            marks.extend(
+                int(element.text)
+                for element in root.iterfind(f'.//{{*}}{tag}')
+                if element.text
+            )
         return {
             'invoices': invoices,
             'cancellations': cancellations,
@@ -246,7 +252,10 @@ class ResCompany(models.Model):
             afm = Partner._l10n_gr_afm_extract_vat(partner.vat)
             data = Partner._l10n_gr_afm_call_aade(afm, username, password)
         except Exception as error:  # noqa: BLE001 - UserError/network; must never break the fetch
-            _logger.warning("myDATA fetch: AADE enrichment failed for %s: %s", partner.vat, error)
+            _logger.warning(
+                'myDATA fetch: partner enrichment failed company_id=%s '
+                'partner_id=%s error_type=%s',
+                self.id, partner.id, type(error).__name__)
             return _('AADE registry enrichment failed: %s', error)
         partner.write({
             field: value
@@ -330,29 +339,15 @@ class ResCompany(models.Model):
             'deductions': _('Deductions'),
         }[key]
 
-    @api.model
-    def _l10n_gr_edi_payment_method_label(self, code):
-        """myDATA appendix 8.1 payment method code -> label. Built here rather
-        than as a module constant so the labels are extracted and translated."""
-        return {
-            1: _('Domestic business payment account'),
-            2: _('Foreign business payment account'),
-            3: _('Cash'),
-            4: _('Cheque'),
-            5: _('On credit'),
-            6: _('Web banking'),
-            7: _('POS / e-POS'),
-            8: _('IRIS instant payment'),
-        }.get(code, code)
-
     def _l10n_gr_edi_match_purchase_tax(self, percent):
         self.ensure_one()
-        return self.env['account.tax'].search([
+        taxes = self.env['account.tax'].search([
             ('company_id', '=', self.id),
             ('type_tax_use', '=', 'purchase'),
             ('amount_type', '=', 'percent'),
             ('amount', '=', percent),
-        ], limit=1)
+        ])
+        return taxes if len(taxes) == 1 else self.env['account.tax']
 
     def _l10n_gr_edi_prepare_line_vals(self, inv):
         """Map payload lines to account.move.line create-commands.
@@ -406,9 +401,10 @@ class ResCompany(models.Model):
                         'quantity': 1.0,
                         'price_unit': sign * line['vat_amount'],
                         'tax_ids': [Command.set([])],
+                        'l10n_gr_edi_is_fetch_adjustment': True,
                     }))
                     report['warnings'].append(_(
-                        'Line %(n)s: no %(pct)s%% purchase tax found — '
+                        'Line %(n)s: no unique %(pct)s%% purchase tax found — '
                         'VAT amount added as a separate line.', n=number, pct=vat_pct))
                 if line['vat_exemption_category']:
                     label = dict(TAX_EXEMPTION_CATEGORY_SELECTION).get(
@@ -443,6 +439,7 @@ class ResCompany(models.Model):
                         'quantity': 1.0,
                         'price_unit': sign * charge_sign * amount,
                         'tax_ids': [Command.set([])],
+                        'l10n_gr_edi_is_fetch_adjustment': True,
                     }))
                     if collides:
                         report['warnings'].append(_(
@@ -461,6 +458,11 @@ class ResCompany(models.Model):
                 'quantity': quantity,
                 'price_unit': sign * price_unit,
                 'tax_ids': [Command.set(tax_ids)],
+                'l10n_gr_edi_source_line_number': number,
+                'l10n_gr_edi_tax_exemption_category': (
+                    str(line['vat_exemption_category'])
+                    if line['vat_exemption_category'] else False
+                ),
             }))
 
         # Document-level taxes_totals entries have no product/base line of their own to
@@ -475,6 +477,7 @@ class ResCompany(models.Model):
                 'quantity': 1.0,
                 'price_unit': t_sign * tax_total['tax_amount'],
                 'tax_ids': [Command.set([])],
+                'l10n_gr_edi_is_fetch_adjustment': True,
             }))
             report['warnings'].append(_(
                 'Document-level %(label)s %(amount).2f added as a separate line.',
@@ -507,15 +510,22 @@ class ResCompany(models.Model):
         if header['invoice_type'] in INVOICE_TYPES_HAVE_EXPENSE:
             vals['l10n_gr_edi_inv_type'] = header['invoice_type']
         currency_code = header['currency']
-        if currency_code and currency_code != 'EUR':
+        if currency_code and currency_code != self.currency_id.name:
             currency = self.env['res.currency'].search(
                 [('name', '=', currency_code)], limit=1)
             if currency:
                 vals['currency_id'] = currency.id
-                if header['exchange_rate']:
-                    report['lines'].append(_(
-                        'Document currency %(code)s (exchange rate to EUR: %(rate)s).',
-                        code=currency_code, rate=header['exchange_rate']))
+                exchange_rate = header['exchange_rate']
+                if self.currency_id.name == 'EUR' and exchange_rate and exchange_rate > 0:
+                    vals['invoice_currency_rate'] = exchange_rate
+                elif self.currency_id.name != 'EUR':
+                    report['warnings'].append(_(
+                        'AADE exchange rate was not applied because the company '
+                        'currency is not EUR. Review the bill rate.'))
+                else:
+                    report['warnings'].append(_(
+                        'AADE did not provide a valid exchange rate. '
+                        'Review the bill rate.'))
             else:
                 report['warnings'].append(_(
                     'Unknown or inactive currency %(code)s — amounts recorded in '
@@ -527,6 +537,7 @@ class ResCompany(models.Model):
             ], limit=1)
             if original:
                 vals['reversed_entry_id'] = original.id
+                vals['l10n_gr_edi_correlation_id'] = original.id
                 report['lines'].append(_(
                     'Credit note linked to %(name)s (MARK %(mark)s).',
                     name=original.display_name, mark=original.l10n_gr_edi_mark))
@@ -571,7 +582,7 @@ class ResCompany(models.Model):
             )]
         return []
 
-    def _l10n_gr_edi_build_fetch_note(self, inv, partner_report, report):
+    def _l10n_gr_edi_build_fetch_note(self, inv, _partner_report, report):
         header = inv['header']
         invoice_type = header['invoice_type']
         # The selection labels already carry the code ("2.1 - Service Rendered
@@ -582,16 +593,15 @@ class ResCompany(models.Model):
               dict(INVOICE_TYPES_SELECTION).get(invoice_type) or invoice_type),
             _('Reference: %(series)s/%(aa)s',
               series=header['series'] or '0', aa=header['aa'] or ''),
+            _('Issue date: %s', header['issue_date']),
+            _('Source lines: %s', len(inv['lines'])),
         ]
-        if inv['uid']:
-            source_lines.append(_('UID: %s', inv['uid']))
-        payment_lines = [
-            _('%(label)s: %(amount).2f%(info)s',
-              label=self._l10n_gr_edi_payment_method_label(pm['type']),
-              amount=pm['amount'],
-              info=f" ({pm['info']})" if pm['info'] else '')
-            for pm in inv['payment_methods']
-        ]
+        if summary := inv.get('summary'):
+            source_lines.append(_(
+                'Declared totals: net %(net).2f, VAT %(vat).2f, gross %(gross).2f',
+                net=summary['total_net_value'],
+                vat=summary['total_vat_amount'],
+                gross=summary['total_gross_value']))
 
         def section(title, items):
             body = Markup('<br/>').join(escape(item) for item in items)
@@ -602,12 +612,6 @@ class ResCompany(models.Model):
         if qr_code_url and qr_code_url.startswith(('http://', 'https://')):
             parts[0] += Markup('<br/><a href="%s">%s</a>') % (
                 qr_code_url, _('View on myDATA'))
-        if partner_report:
-            parts.append(section(_('Partner'), partner_report))
-        if report['lines']:
-            parts.append(section(_('Mapping'), report['lines']))
-        if payment_lines:
-            parts.append(section(_('Payment'), payment_lines))
         if report['warnings']:
             parts.append(section(_('Warnings'), report['warnings']))
         return Markup('<br/><br/>').join(parts)
@@ -624,8 +628,10 @@ class ResCompany(models.Model):
             if not cancellation['invoice_mark']:
                 # Searching an empty MARK normalises to `= False` and would
                 # match an arbitrary markless bill - fail closed instead.
-                _logger.warning("myDATA fetch: cancellation entry without an "
-                                "invoice MARK ignored: %s", cancellation)
+                _logger.warning(
+                    'myDATA fetch: cancellation without invoice MARK ignored '
+                    'company_id=%s cancellation_mark=%s',
+                    self.id, cancellation.get('cancellation_mark'))
                 continue
             move = Move.search([
                 ('l10n_gr_edi_mark', '=', cancellation['invoice_mark']),
@@ -633,12 +639,15 @@ class ResCompany(models.Model):
                 ('move_type', 'in', ('in_invoice', 'in_refund')),
             ], limit=1)
             if not move:
-                _logger.debug("myDATA fetch: cancellation for unknown MARK %s",
-                              cancellation['invoice_mark'])
+                _logger.debug(
+                    'myDATA fetch: cancellation skipped company_id=%s '
+                    'invoice_mark=%s reason=unknown',
+                    self.id, cancellation['invoice_mark'])
                 continue
             if move.state == 'cancel':
                 continue  # idempotent on refetch
             if (move.state == 'draft' and not move.posted_before
+                    and not move.is_manually_modified
                     and move.l10n_gr_edi_state == 'bill_fetched'):
                 move.button_cancel()
                 move.message_post(
@@ -702,26 +711,30 @@ class ResCompany(models.Model):
             if not parsed['continuation']:
                 return result
             params = dict(params, **parsed['continuation'])
-        _logger.error(
-            "myDATA fetch: page cap (%s) reached for company %s — some documents may "
-            "have been skipped. Clear the fetch watermark to refetch the window.",
-            FETCH_MAX_PAGES, self.name)
-        return result
+        raise ValueError(_(
+            'myDATA RequestDocs page limit (%s) reached; the batch was not processed.',
+            FETCH_MAX_PAGES))
 
     def _l10n_gr_edi_create_bill(self, inv):
         """Create one draft vendor bill (+ document + chatter note) from an
-        invoice dict. Returns an empty recordset when skipped."""
+        invoice dict. Returns ``(move, warning_count)``; ``move`` is empty when
+        the source invoice is skipped."""
         self.ensure_one()
         Move = self.env['account.move'].sudo()
         if inv['cancelled_by_mark']:
-            _logger.info("myDATA fetch: skipping MARK %s (already cancelled by MARK %s)",
-                         inv['mark'], inv['cancelled_by_mark'])
-            return Move.browse()
+            _logger.debug(
+                'myDATA fetch: invoice skipped company_id=%s mark=%s '
+                'reason=pre_cancelled cancellation_mark=%s',
+                self.id, inv['mark'], inv['cancelled_by_mark'])
+            return Move.browse(), 0
         if Move.search_count([
             ('l10n_gr_edi_mark', '=', inv['mark']),
             ('company_id', '=', self.id),
         ], limit=1):
-            return Move.browse()
+            _logger.debug(
+                'myDATA fetch: invoice skipped company_id=%s mark=%s reason=duplicate',
+                self.id, inv['mark'])
+            return Move.browse(), 0
         partner, partner_report = self._l10n_gr_edi_resolve_partner(inv['issuer'])
         vals, report = self._l10n_gr_edi_prepare_bill_vals(inv, partner)
         move = Move.create(vals)
@@ -734,7 +747,13 @@ class ResCompany(models.Model):
         move.message_post(
             body=self._l10n_gr_edi_build_fetch_note(inv, partner_report, report),
             subtype_xmlid='mail.mt_note')
-        return move
+        warning_count = len(report['warnings'])
+        if warning_count:
+            _logger.warning(
+                'myDATA fetch: bill requires review company_id=%s mark=%s '
+                'move_id=%s warnings=%s',
+                self.id, inv['mark'], move.id, warning_count)
+        return move, warning_count
 
     @api.model
     def _cron_l10n_gr_edi_fetch_invoices(self):
@@ -748,25 +767,55 @@ class ResCompany(models.Model):
                 try:
                     docs = company._l10n_gr_edi_fetch_docs(session)
                 except (http_requests.RequestException, etree.XMLSyntaxError, ValueError) as error:
-                    _logger.error("myDATA fetch failed for company %s: %s",
-                                  company.name, error)
+                    _logger.error(
+                        'myDATA fetch: company run failed company_id=%s '
+                        'error_type=%s error=%s',
+                        company.id, type(error).__name__, error)
                     continue
+                except Exception as error:  # noqa: BLE001 - isolate companies
+                    _logger.exception(
+                        'myDATA fetch: unexpected company fetch failure '
+                        'company_id=%s error_type=%s',
+                        company.id, type(error).__name__)
+                    continue
+                failed = False
+                created_count = 0
+                skipped_count = 0
+                warning_count = 0
                 for inv in docs['invoices']:
                     try:
                         with self.env.cr.savepoint():
-                            company._l10n_gr_edi_create_bill(inv)
-                    except Exception:  # noqa: BLE001 - isolate per-invoice failures
+                            move, bill_warning_count = (
+                                company._l10n_gr_edi_create_bill(inv))
+                        created_count += bool(move)
+                        skipped_count += not move
+                        warning_count += bill_warning_count
+                    except Exception as error:  # noqa: BLE001 - isolate per-invoice failures
+                        failed = True
                         _logger.exception(
-                            "myDATA fetch: failed to create bill for MARK %s "
-                            "(company %s); payload: %r",
-                            inv.get('mark'), company.name, inv)
+                            'myDATA fetch: bill creation failed company_id=%s '
+                            'mark=%s error_type=%s',
+                            company.id, inv.get('mark'), type(error).__name__)
                 try:
                     with self.env.cr.savepoint():
                         company._l10n_gr_edi_process_cancellations(docs['cancellations'])
-                except Exception:  # noqa: BLE001 - isolate per-company failures
+                except Exception as error:  # noqa: BLE001 - isolate per-company failures
+                    failed = True
                     _logger.exception(
-                        "myDATA fetch: failed to process cancellations for company %s",
-                        company.name)
+                        'myDATA fetch: cancellation processing failed company_id=%s '
+                        'error_type=%s',
+                        company.id, type(error).__name__)
                 company_sudo = company.sudo()
-                if docs['max_mark'] > int(company_sudo.l10n_gr_edi_fetch_mark or 0):
+                old_mark = int(company_sudo.l10n_gr_edi_fetch_mark or 0)
+                if (
+                    not failed
+                    and docs['max_mark'] > old_mark
+                ):
                     company_sudo.l10n_gr_edi_fetch_mark = str(docs['max_mark'])
+                _logger.info(
+                    'myDATA fetch: company run complete company_id=%s fetched=%s '
+                    'created=%s skipped=%s cancellations=%s failures=%s warnings=%s '
+                    'watermark_from=%s watermark_to=%s',
+                    company.id, len(docs['invoices']), created_count, skipped_count,
+                    len(docs['cancellations']), int(failed), warning_count,
+                    old_mark, int(company_sudo.l10n_gr_edi_fetch_mark or 0))
