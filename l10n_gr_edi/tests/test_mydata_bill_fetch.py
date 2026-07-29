@@ -554,3 +554,60 @@ class TestMyDataFetchNote(TestMyDataFetchCommon):
         html = str(note)
         self.assertNotIn('<a ', html)
         self.assertNotIn('javascript:alert(1)', html)
+
+
+class TestMyDataFetchCancellations(TestMyDataFetchCommon):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.partner = cls.env['res.partner'].create({
+            'name': 'Vendor X', 'vat': 'EL123456789', 'is_company': True,
+        })
+
+    def _make_fetched_bill(self, mark):
+        move = self.env['account.move'].create({
+            'move_type': 'in_invoice', 'partner_id': self.partner.id,
+            'invoice_date': '2026-07-01', 'company_id': self.company.id,
+            'invoice_line_ids': [Command.create({
+                'name': 'line', 'quantity': 1, 'price_unit': 100.0,
+            })],
+        })
+        self.env['l10n_gr_edi.document'].create({
+            'state': 'bill_fetched', 'move_id': move.id, 'mydata_mark': mark,
+        })
+        return move
+
+    def _cancellation(self, mark):
+        return [{'invoice_mark': mark, 'cancellation_mark': '400009999999999',
+                 'cancellation_date': '2026-07-10'}]
+
+    def test_draft_bill_is_cancelled(self):
+        move = self._make_fetched_bill('400001234567001')
+        self.company._l10n_gr_edi_process_cancellations(
+            self._cancellation('400001234567001'))
+        self.assertEqual(move.state, 'cancel')
+        self.assertTrue(any('400009999999999' in (m.body or '')
+                            for m in move.message_ids))
+
+    def test_posted_bill_gets_activity_not_cancelled(self):
+        move = self._make_fetched_bill('400001234567002')
+        move.action_post()
+        self.company._l10n_gr_edi_process_cancellations(
+            self._cancellation('400001234567002'))
+        self.assertEqual(move.state, 'posted')
+        self.assertTrue(move.activity_ids)
+
+    def test_unknown_mark_is_ignored(self):
+        # must not raise
+        self.company._l10n_gr_edi_process_cancellations(
+            self._cancellation('400000000000000'))
+
+    def test_already_cancelled_is_idempotent(self):
+        move = self._make_fetched_bill('400001234567003')
+        self.company._l10n_gr_edi_process_cancellations(
+            self._cancellation('400001234567003'))
+        message_count = len(move.message_ids)
+        self.company._l10n_gr_edi_process_cancellations(
+            self._cancellation('400001234567003'))
+        self.assertEqual(len(move.message_ids), message_count)

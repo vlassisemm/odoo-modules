@@ -570,3 +570,46 @@ class ResCompany(models.Model):
         if report['warnings']:
             parts.append(section(_('Warnings'), report['warnings']))
         return Markup('<br/><br/>').join(parts)
+
+    # ------------------------------------------------------------------
+    # Cancellations
+    # ------------------------------------------------------------------
+
+    def _l10n_gr_edi_process_cancellations(self, cancellations):
+        """Handle issuer-side cancellations: cancel untouched drafts, flag the rest."""
+        self.ensure_one()
+        Move = self.env['account.move'].sudo()
+        for cancellation in cancellations:
+            move = Move.search([
+                ('l10n_gr_edi_mark', '=', cancellation['invoice_mark']),
+                ('company_id', '=', self.id),
+                ('move_type', 'in', ('in_invoice', 'in_refund')),
+            ], limit=1)
+            if not move:
+                _logger.debug("myDATA fetch: cancellation for unknown MARK %s",
+                              cancellation['invoice_mark'])
+                continue
+            if move.state == 'cancel':
+                continue  # idempotent on refetch
+            if move.state == 'draft' and move.l10n_gr_edi_state == 'bill_fetched':
+                move.button_cancel()
+                move.message_post(
+                    body=_('Invoice cancelled by the issuer on myDATA '
+                           '(cancellation MARK %(cmark)s, date %(date)s). '
+                           'This draft bill has been cancelled automatically.',
+                           cmark=cancellation['cancellation_mark'],
+                           date=cancellation['cancellation_date']),
+                    subtype_xmlid='mail.mt_note')
+            else:
+                note = _('Invoice cancelled by the issuer on myDATA '
+                         '(cancellation MARK %(cmark)s, date %(date)s). '
+                         'Manual review/reversal required.',
+                         cmark=cancellation['cancellation_mark'],
+                         date=cancellation['cancellation_date'])
+                move.message_post(body=note, subtype_xmlid='mail.mt_note')
+                move.activity_schedule(
+                    'mail.mail_activity_data_todo',
+                    summary=_('myDATA: vendor invoice cancelled by issuer'),
+                    note=note,
+                    user_id=(move.invoice_user_id or move.create_uid).id,
+                )
