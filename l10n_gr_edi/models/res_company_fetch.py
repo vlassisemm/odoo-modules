@@ -1,6 +1,8 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 import logging
 
+from datetime import timedelta
+
 import requests as http_requests
 from lxml import etree
 from markupsafe import Markup, escape
@@ -614,3 +616,95 @@ class ResCompany(models.Model):
                     note=note,
                     user_id=(move.invoice_user_id or move.create_uid).id,
                 )
+
+    # ------------------------------------------------------------------
+    # HTTP fetch + orchestrator
+    # ------------------------------------------------------------------
+
+    def _l10n_gr_edi_fetch_docs(self, session):
+        """Fetch all RequestDocs pages for this company. Returns merged dict:
+        {'invoices': [...], 'cancellations': [...], 'max_mark': int}."""
+        self.ensure_one()
+        url = FETCH_URL_DEV if self.l10n_gr_edi_test_env else FETCH_URL_PROD
+        timeout = int(self.env['ir.config_parameter'].sudo().get_param(
+            'l10n_gr_edi.fetch_timeout', FETCH_DEFAULT_TIMEOUT))
+        headers = {
+            'aade-user-id': self.l10n_gr_edi_aade_id,
+            'ocp-apim-subscription-key': self.l10n_gr_edi_aade_key,
+        }
+        params = {'mark': self.l10n_gr_edi_fetch_mark or 0}
+        if not self.l10n_gr_edi_fetch_mark:
+            params['dateFrom'] = (
+                fields.Datetime.now() - timedelta(days=90)).strftime('%d/%m/%Y')
+            params['dateTo'] = fields.Datetime.now().strftime('%d/%m/%Y')
+        result = {'invoices': [], 'cancellations': [], 'max_mark': 0}
+        for _page in range(FETCH_MAX_PAGES):
+            response = session.get(url, headers=headers, params=params, timeout=timeout)
+            response.raise_for_status()
+            parsed = self._l10n_gr_edi_parse_requested_docs(response.content)
+            result['invoices'] += parsed['invoices']
+            result['cancellations'] += parsed['cancellations']
+            result['max_mark'] = max(result['max_mark'], parsed['max_mark'])
+            if not parsed['continuation']:
+                return result
+            params = dict(params, **parsed['continuation'])
+        _logger.error(
+            "myDATA fetch: page cap (%s) reached for company %s — remaining documents "
+            "will be fetched on the next cron run.", FETCH_MAX_PAGES, self.name)
+        return result
+
+    def _l10n_gr_edi_create_bill(self, inv):
+        """Create one draft vendor bill (+ document + chatter note) from an
+        invoice dict. Returns an empty recordset when skipped."""
+        self.ensure_one()
+        Move = self.env['account.move'].sudo()
+        if inv['cancelled_by_mark']:
+            _logger.info("myDATA fetch: skipping MARK %s (already cancelled by MARK %s)",
+                         inv['mark'], inv['cancelled_by_mark'])
+            return Move.browse()
+        if Move.search_count([
+            ('l10n_gr_edi_mark', '=', inv['mark']),
+            ('company_id', '=', self.id),
+        ], limit=1):
+            return Move.browse()
+        partner, partner_report = self._l10n_gr_edi_resolve_partner(inv['issuer'])
+        vals, report = self._l10n_gr_edi_prepare_bill_vals(inv, partner)
+        move = Move.create(vals)
+        self.env['l10n_gr_edi.document'].sudo().create({
+            'state': 'bill_fetched',
+            'move_id': move.id,
+            'mydata_mark': inv['mark'],
+        })
+        report['warnings'] += self._l10n_gr_edi_check_summary(move, inv)
+        move.message_post(
+            body=self._l10n_gr_edi_build_fetch_note(inv, partner_report, report),
+            subtype_xmlid='mail.mt_note')
+        return move
+
+    @api.model
+    def _cron_l10n_gr_edi_fetch_invoices(self):
+        """Receive issued myDATA invoices and create draft vendor bills."""
+        gr_companies = self.env['res.company'].search([
+            ('l10n_gr_edi_aade_id', '!=', False),
+            ('l10n_gr_edi_aade_key', '!=', False),
+        ])
+        session = http_requests.Session()
+        for company in gr_companies:
+            try:
+                docs = company._l10n_gr_edi_fetch_docs(session)
+            except (http_requests.RequestException, etree.XMLSyntaxError, ValueError) as error:
+                _logger.error("myDATA fetch failed for company %s: %s",
+                              company.name, error)
+                continue
+            for inv in docs['invoices']:
+                try:
+                    with self.env.cr.savepoint():
+                        company._l10n_gr_edi_create_bill(inv)
+                except Exception:  # noqa: BLE001 - isolate per-invoice failures
+                    _logger.exception(
+                        "myDATA fetch: failed to create bill for MARK %s "
+                        "(company %s); payload: %r",
+                        inv.get('mark'), company.name, inv)
+            company._l10n_gr_edi_process_cancellations(docs['cancellations'])
+            if docs['max_mark'] > int(company.l10n_gr_edi_fetch_mark or 0):
+                company.sudo().l10n_gr_edi_fetch_mark = str(docs['max_mark'])

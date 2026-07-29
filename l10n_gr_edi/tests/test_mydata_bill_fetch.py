@@ -622,3 +622,132 @@ class TestMyDataFetchCancellations(TestMyDataFetchCommon):
         self.company._l10n_gr_edi_process_cancellations(
             self._cancellation('400001234567003'))
         self.assertEqual(len(move.message_ids), message_count)
+
+
+class _FakeResponse:
+    def __init__(self, content):
+        self.content = content
+
+    def raise_for_status(self):
+        pass
+
+
+class TestMyDataFetchFlow(TestMyDataFetchCommon):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._find_or_create_purchase_tax(24.0)
+
+    def _run_cron_with_pages(self, pages):
+        """Run the cron with mocked HTTP GETs returning the given XML bodies."""
+        responses = [_FakeResponse(p) for p in pages]
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(kwargs)
+            return responses.pop(0)
+
+        with patch(
+            'odoo.addons.l10n_gr_edi.models.res_company_fetch.http_requests.Session'
+        ) as session_cls:
+            session_cls.return_value.get.side_effect = fake_get
+            self.env['res.company']._cron_l10n_gr_edi_fetch_invoices()
+        return calls
+
+    def test_cron_creates_bill_with_document_note_and_watermark(self):
+        self._run_cron_with_pages([_requested_doc(_invoice_xml())])
+        move = self.env['account.move'].search([
+            ('l10n_gr_edi_mark', '=', '400001234567890'),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertEqual(len(move), 1)
+        self.assertEqual(move.state, 'draft')
+        self.assertEqual(move.move_type, 'in_invoice')
+        self.assertEqual(move.ref, 'A/101')
+        self.assertTrue(move.l10n_gr_edi_is_fetched)
+        self.assertEqual(move.l10n_gr_edi_state, 'bill_fetched')
+        self.assertTrue(any('myDATA' in (m.body or '') for m in move.message_ids))
+        self.assertEqual(self.company.l10n_gr_edi_fetch_mark, '400001234567890')
+        # partner auto-created and tagged
+        tag = self.env.ref('l10n_gr_edi.res_partner_category_mydata_auto')
+        self.assertIn(tag, move.partner_id.category_id)
+
+    def test_cron_pagination_follows_continuation_token(self):
+        page1 = _requested_doc(
+            _invoice_xml(mark='400001234567890')
+            + '<continuationToken><nextPartitionKey>PK</nextPartitionKey>'
+              '<nextRowKey>RK</nextRowKey></continuationToken>')
+        page2 = _requested_doc(_invoice_xml(mark='400001234567891', aa='102'))
+        calls = self._run_cron_with_pages([page1, page2])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]['params'].get('nextPartitionKey'), 'PK')
+        self.assertEqual(calls[1]['params'].get('nextRowKey'), 'RK')
+        bills = self.env['account.move'].search([
+            ('l10n_gr_edi_is_fetched', '=', True),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertEqual(len(bills), 2)
+        self.assertEqual(self.company.l10n_gr_edi_fetch_mark, '400001234567891')
+
+    def test_cron_uses_watermark_as_mark_param(self):
+        self.company.l10n_gr_edi_fetch_mark = '400001234567890'
+        calls = self._run_cron_with_pages([_requested_doc('')])
+        self.assertEqual(calls[0]['params']['mark'], '400001234567890')
+        self.assertNotIn('dateFrom', calls[0]['params'])
+
+    def test_cron_first_run_uses_date_window(self):
+        calls = self._run_cron_with_pages([_requested_doc('')])
+        self.assertEqual(calls[0]['params']['mark'], 0)
+        self.assertIn('dateFrom', calls[0]['params'])
+        self.assertIn('dateTo', calls[0]['params'])
+
+    def test_cron_dedup_by_mark(self):
+        self._run_cron_with_pages([_requested_doc(_invoice_xml())])
+        self.company.l10n_gr_edi_fetch_mark = False  # force refetch of same doc
+        self._run_cron_with_pages([_requested_doc(_invoice_xml())])
+        bills = self.env['account.move'].search([
+            ('l10n_gr_edi_mark', '=', '400001234567890'),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertEqual(len(bills), 1)
+
+    def test_cron_skips_precancelled_invoice(self):
+        self._run_cron_with_pages([_requested_doc(_invoice_xml(
+            invoice_extra='<inv:cancelledByMark>400009999999999</inv:cancelledByMark>'))])
+        bills = self.env['account.move'].search([
+            ('l10n_gr_edi_mark', '=', '400001234567890'),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertFalse(bills)
+        # watermark still advances past the skipped doc
+        self.assertEqual(self.company.l10n_gr_edi_fetch_mark, '400001234567890')
+
+    def test_cron_isolates_bad_invoice(self):
+        # first invoice has an unparseable issue date -> creation fails;
+        # second invoice must still be created
+        bad = _invoice_xml(mark='400001234567890', issue_date='not-a-date')
+        good = _invoice_xml(mark='400001234567891', aa='102')
+        self._run_cron_with_pages([_requested_doc(bad + good)])
+        bills = self.env['account.move'].search([
+            ('l10n_gr_edi_is_fetched', '=', True),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertEqual(len(bills), 1)
+        self.assertEqual(bills.l10n_gr_edi_mark, '400001234567891')
+        self.assertEqual(self.company.l10n_gr_edi_fetch_mark, '400001234567891')
+
+    def test_cron_processes_cancellations(self):
+        self._run_cron_with_pages([_requested_doc(_invoice_xml())])
+        move = self.env['account.move'].search([
+            ('l10n_gr_edi_mark', '=', '400001234567890'),
+            ('company_id', '=', self.company.id),
+        ])
+        self.company.l10n_gr_edi_fetch_mark = False
+        self._run_cron_with_pages([_requested_doc(
+            '<cancelledInvoicesDoc>'
+            '<invoiceMark>400001234567890</invoiceMark>'
+            '<cancellationMark>400009999999999</cancellationMark>'
+            '<cancellationDate>2026-07-10</cancellationDate>'
+            '</cancelledInvoicesDoc>')])
+        self.assertEqual(move.state, 'cancel')
