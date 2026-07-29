@@ -10,13 +10,29 @@ from odoo.tests import tagged
 
 
 def _requested_doc(body):
-    """Wrap invoice/cancellation XML in a RequestedDoc envelope, return bytes."""
+    """Wrap invoice/cancellation XML in a RequestedDoc envelope, return bytes.
+
+    requestedInvoicesDoc.xsd declares a single targetNamespace
+    (http://www.aade.gr/myDATA/invoice/v1.0) with elementFormDefault="qualified",
+    so RequestedDoc and every descendant live in the invoice namespace. The `inv:`
+    prefix is bound to that same namespace here so the fixtures stay readable.
+    """
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
-        '<RequestedDoc xmlns="http://www.aade.gr/myDATA/requestedDoc/v1.0" '
+        '<RequestedDoc xmlns="http://www.aade.gr/myDATA/invoice/v1.0" '
         'xmlns:inv="http://www.aade.gr/myDATA/invoice/v1.0">'
         f'{body}</RequestedDoc>'
     ).encode('utf-8')
+
+
+def _cancellation_xml(invoice_mark, cancellation_mark, cancellation_date='2026-07-10'):
+    return (
+        '<cancelledInvoice>'
+        f'<invoiceMark>{invoice_mark}</invoiceMark>'
+        f'<cancellationMark>{cancellation_mark}</cancellationMark>'
+        f'<cancellationDate>{cancellation_date}</cancellationDate>'
+        '</cancelledInvoice>'
+    )
 
 
 def _invoice_xml(
@@ -156,27 +172,49 @@ class TestMyDataFetchParse(TestMyDataFetchCommon):
         self.assertEqual(result['cancellations'], [])
 
     def test_parse_cancellations_and_continuation(self):
+        # cancelledInvoicesDoc is a CONTAINER of <cancelledInvoice> records
+        # (requestedInvoicesDoc.xsd); two records here pin that distinction.
         content = _requested_doc(
             _invoice_xml()
             + '<cancelledInvoicesDoc>'
-            '<invoiceMark>400001234567800</invoiceMark>'
-            '<cancellationMark>400009999999999</cancellationMark>'
-            '<cancellationDate>2026-07-10</cancellationDate>'
-            '</cancelledInvoicesDoc>'
+            + _cancellation_xml('400001234567800', '400009999999998')
+            + _cancellation_xml('400001234567801', '400009999999999', '2026-07-11')
+            + '</cancelledInvoicesDoc>'
             + '<continuationToken>'
             '<nextPartitionKey>PK1</nextPartitionKey><nextRowKey>RK1</nextRowKey>'
             '</continuationToken>'
         )
         result = self.company._l10n_gr_edi_parse_requested_docs(content)
-        self.assertEqual(result['cancellations'], [{
-            'invoice_mark': '400001234567800',
-            'cancellation_mark': '400009999999999',
-            'cancellation_date': '2026-07-10',
-        }])
+        self.assertEqual(result['cancellations'], [
+            {
+                'invoice_mark': '400001234567800',
+                'cancellation_mark': '400009999999998',
+                'cancellation_date': '2026-07-10',
+            },
+            {
+                'invoice_mark': '400001234567801',
+                'cancellation_mark': '400009999999999',
+                'cancellation_date': '2026-07-11',
+            },
+        ])
         self.assertEqual(result['continuation'],
                          {'nextPartitionKey': 'PK1', 'nextRowKey': 'RK1'})
-        # cancellation mark is larger than the invoice mark
+        # the highest cancellation mark is larger than the invoice mark
         self.assertEqual(result['max_mark'], 400009999999999)
+
+    def test_parse_flat_cancellations_block_yields_no_records(self):
+        # A malformed payload carrying the fields directly under
+        # <cancelledInvoicesDoc> has no <cancelledInvoice> record, so it must
+        # parse to nothing rather than to one all-None pseudo-cancellation.
+        content = _requested_doc(
+            '<cancelledInvoicesDoc>'
+            '<invoiceMark>400001234567800</invoiceMark>'
+            '<cancellationMark>400009999999999</cancellationMark>'
+            '<cancellationDate>2026-07-10</cancellationDate>'
+            '</cancelledInvoicesDoc>'
+        )
+        result = self.company._l10n_gr_edi_parse_requested_docs(content)
+        self.assertEqual(result['cancellations'], [])
 
     def test_parse_foreign_issuer_and_credit_header(self):
         content = _requested_doc(_invoice_xml(
@@ -617,6 +655,51 @@ class TestMyDataFetchCancellations(TestMyDataFetchCommon):
         self.company._l10n_gr_edi_process_cancellations(
             self._cancellation('400000000000000'))
 
+    def test_cancellation_without_mark_touches_nothing(self):
+        # A cancellation entry with no invoice MARK must fail closed. Searching
+        # for it would normalise to `l10n_gr_edi_mark = False` and match an
+        # arbitrary markless bill, posting a bogus cancellation note on it.
+        markless = self.env['account.move'].create({
+            'move_type': 'in_invoice', 'partner_id': self.partner.id,
+            'invoice_date': '2026-07-01', 'company_id': self.company.id,
+            'invoice_line_ids': [Command.create({
+                'name': 'line', 'quantity': 1, 'price_unit': 100.0,
+            })],
+        })
+        self.assertFalse(markless.l10n_gr_edi_mark)
+        message_count = len(markless.message_ids)
+        self.company._l10n_gr_edi_process_cancellations([{
+            'invoice_mark': None,
+            'cancellation_mark': '400009999999999',
+            'cancellation_date': '2026-07-10',
+        }])
+        self.assertEqual(markless.state, 'draft')
+        self.assertEqual(len(markless.message_ids), message_count)
+        self.assertFalse(markless.activity_ids)
+
+    def test_flat_cancellations_payload_leaves_markless_bill_untouched(self):
+        # End-to-end guard: a malformed (flat) cancellations block parsed and
+        # then processed must not disturb an unrelated markless draft bill.
+        markless = self.env['account.move'].create({
+            'move_type': 'in_invoice', 'partner_id': self.partner.id,
+            'invoice_date': '2026-07-01', 'company_id': self.company.id,
+            'invoice_line_ids': [Command.create({
+                'name': 'line', 'quantity': 1, 'price_unit': 100.0,
+            })],
+        })
+        message_count = len(markless.message_ids)
+        parsed = self.company._l10n_gr_edi_parse_requested_docs(_requested_doc(
+            '<cancelledInvoicesDoc>'
+            '<invoiceMark>400001234567800</invoiceMark>'
+            '<cancellationMark>400009999999999</cancellationMark>'
+            '<cancellationDate>2026-07-10</cancellationDate>'
+            '</cancelledInvoicesDoc>'
+        ))
+        self.company._l10n_gr_edi_process_cancellations(parsed['cancellations'])
+        self.assertEqual(markless.state, 'draft')
+        self.assertEqual(len(markless.message_ids), message_count)
+        self.assertFalse(markless.activity_ids)
+
     def test_already_cancelled_is_idempotent(self):
         move = self._make_fetched_bill('400001234567003')
         self.company._l10n_gr_edi_process_cancellations(
@@ -753,10 +836,8 @@ class TestMyDataFetchFlow(TestMyDataFetchCommon):
         self.company.l10n_gr_edi_fetch_mark = False
         self._run_cron_with_pages([_requested_doc(
             '<cancelledInvoicesDoc>'
-            '<invoiceMark>400001234567890</invoiceMark>'
-            '<cancellationMark>400009999999999</cancellationMark>'
-            '<cancellationDate>2026-07-10</cancellationDate>'
-            '</cancelledInvoicesDoc>')])
+            + _cancellation_xml('400001234567890', '400009999999999')
+            + '</cancelledInvoicesDoc>')])
         self.assertEqual(move.state, 'cancel')
 
     def test_cron_empty_continuation_token_does_not_loop(self):

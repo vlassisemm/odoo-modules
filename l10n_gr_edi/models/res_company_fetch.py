@@ -206,7 +206,8 @@ class ResCompany(models.Model):
                 'cancellation_mark': _el_text(el, '{*}cancellationMark'),
                 'cancellation_date': _el_text(el, '{*}cancellationDate'),
             }
-            for el in root.iterfind('.//{*}cancelledInvoicesDoc')
+            # cancelledInvoicesDoc is a container of <cancelledInvoice> records
+            for el in root.iterfind('.//{*}cancelledInvoicesDoc/{*}cancelledInvoice')
         ]
         token_el = root.find('.//{*}continuationToken')
         continuation = None
@@ -586,6 +587,12 @@ class ResCompany(models.Model):
         self.ensure_one()
         Move = self.env['account.move'].sudo()
         for cancellation in cancellations:
+            if not cancellation['invoice_mark']:
+                # Searching an empty MARK normalises to `= False` and would
+                # match an arbitrary markless bill - fail closed instead.
+                _logger.warning("myDATA fetch: cancellation entry without an "
+                                "invoice MARK ignored: %s", cancellation)
+                continue
             move = Move.search([
                 ('l10n_gr_edi_mark', '=', cancellation['invoice_mark']),
                 ('company_id', '=', self.id),
