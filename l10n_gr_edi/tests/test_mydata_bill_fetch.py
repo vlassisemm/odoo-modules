@@ -1,7 +1,7 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 from unittest.mock import patch
 
-from odoo import Command
+from odoo import Command, _
 from odoo.addons.account.tests.common import AccountTestInvoicingCommon
 from odoo.tests import tagged
 
@@ -483,3 +483,54 @@ class TestMyDataFetchBillVals(TestMyDataFetchCommon):
             self._inv(header_extra='<inv:currency>XXX</inv:currency>'), self.partner)
         self.assertNotIn('currency_id', vals)
         self.assertTrue(any('XXX' in w for w in report['warnings']))
+
+
+class TestMyDataFetchNote(TestMyDataFetchCommon):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._find_or_create_purchase_tax(24.0)
+        cls.partner = cls.env['res.partner'].create({
+            'name': 'Vendor X', 'vat': 'EL123456789', 'is_company': True,
+        })
+
+    def _build_move(self, **kw):
+        inv = self.company._l10n_gr_edi_parse_requested_docs(
+            _requested_doc(_invoice_xml(**kw)))['invoices'][0]
+        vals, report = self.company._l10n_gr_edi_prepare_bill_vals(inv, self.partner)
+        move = self.env['account.move'].create(vals)
+        return move, inv, report
+
+    def test_summary_check_passes_on_consistent_totals(self):
+        move, inv, _report = self._build_move()
+        self.assertEqual(self.company._l10n_gr_edi_check_summary(move, inv), [])
+
+    def test_summary_check_warns_on_mismatch(self):
+        move, inv, _report = self._build_move()
+        inv['summary']['total_gross_value'] = 9999.0
+        inv['summary']['total_net_value'] = 9000.0
+        warnings = self.company._l10n_gr_edi_check_summary(move, inv)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn('9999.00', warnings[0])
+
+    def test_note_contains_sections(self):
+        move, inv, report = self._build_move(payments_xml=(
+            '<inv:paymentMethods><inv:paymentMethodDetails>'
+            '<inv:type>3</inv:type><inv:amount>1240.00</inv:amount>'
+            '</inv:paymentMethodDetails></inv:paymentMethods>'
+        ))
+        note = self.company._l10n_gr_edi_build_fetch_note(
+            inv, [_('Partner matched by VAT: Vendor X')], report)
+        html = str(note)
+        self.assertIn('400001234567890', html)   # MARK
+        self.assertIn('2.1', html)               # invoice type
+        self.assertIn('Vendor X', html)          # partner section
+        self.assertIn('Cash', html)              # payment method label
+        self.assertNotIn('Warning', html)        # no warnings section when clean
+
+    def test_note_escapes_payload_html(self):
+        move, inv, report = self._build_move()
+        inv['header']['invoice_type'] = '<script>alert(1)</script>'
+        note = self.company._l10n_gr_edi_build_fetch_note(inv, [], report)
+        self.assertNotIn('<script>', str(note))

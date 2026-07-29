@@ -3,6 +3,7 @@ import logging
 
 import requests as http_requests
 from lxml import etree
+from markupsafe import Markup, escape
 
 from odoo import _, api, fields, models, Command
 from odoo.tools import float_compare
@@ -51,6 +52,17 @@ LINE_CHARGES = (
 TAX_TOTALS_SPEC = {
     1: ('withheld', -1), 2: ('fees', 1), 3: ('other_taxes', 1),
     4: ('stamp_duty', 1), 5: ('deductions', -1),
+}
+
+PAYMENT_METHOD_LABELS = {
+    1: 'Domestic business payment account',
+    2: 'Foreign business payment account',
+    3: 'Cash',
+    4: 'Cheque',
+    5: 'On credit',
+    6: 'Web banking',
+    7: 'POS / e-POS',
+    8: 'IRIS instant payment',
 }
 
 
@@ -487,3 +499,73 @@ class ResCompany(models.Model):
                     'credit note left unlinked.',
                     marks=', '.join(header['correlated_marks'])))
         return vals, report
+
+    # ------------------------------------------------------------------
+    # Summary checksum & chatter note
+    # ------------------------------------------------------------------
+
+    def _l10n_gr_edi_check_summary(self, move, inv):
+        """Compare the created bill's total against the payload summary.
+        Returns a list with one warning string on mismatch, else []."""
+        summary = inv.get('summary')
+        if not summary:
+            return []
+        expected = (
+            summary['total_net_value'] + summary['total_vat_amount']
+            + summary['total_fees_amount'] + summary['total_stamp_duty_amount']
+            + summary['total_other_taxes_amount']
+            - summary['total_withheld_amount'] - summary['total_deductions_amount']
+        )
+        if float_compare(move.amount_total, expected, precision_digits=2) != 0:
+            return [_(
+                'Total mismatch: Odoo bill total %(odoo).2f differs from the myDATA '
+                'summary %(expected).2f (net %(net).2f, VAT %(vat).2f, '
+                'withheld %(withheld).2f, fees %(fees).2f, stamp duty %(stamp).2f, '
+                'other taxes %(other).2f, deductions %(deductions).2f, '
+                'gross %(gross).2f). Please review the bill lines.',
+                odoo=move.amount_total, expected=expected,
+                net=summary['total_net_value'], vat=summary['total_vat_amount'],
+                withheld=summary['total_withheld_amount'],
+                fees=summary['total_fees_amount'],
+                stamp=summary['total_stamp_duty_amount'],
+                other=summary['total_other_taxes_amount'],
+                deductions=summary['total_deductions_amount'],
+                gross=summary['total_gross_value'],
+            )]
+        return []
+
+    def _l10n_gr_edi_build_fetch_note(self, inv, partner_report, report):
+        header = inv['header']
+        source_lines = [
+            _('MARK: %s', inv['mark']),
+            _('Invoice type: %s', header['invoice_type']),
+            _('Reference: %(series)s/%(aa)s',
+              series=header['series'] or '0', aa=header['aa'] or ''),
+        ]
+        if inv['uid']:
+            source_lines.append(_('UID: %s', inv['uid']))
+        payment_lines = [
+            _('%(label)s: %(amount).2f%(info)s',
+              label=PAYMENT_METHOD_LABELS.get(pm['type'], pm['type']),
+              amount=pm['amount'],
+              info=f" ({pm['info']})" if pm['info'] else '')
+            for pm in inv['payment_methods']
+        ]
+
+        def section(title, items):
+            body = Markup('<br/>').join(escape(item) for item in items)
+            return Markup('<b>%s</b><br/>%s') % (title, body)
+
+        parts = [section(_('Fetched from myDATA'), source_lines)]
+        if inv['qr_code_url']:
+            parts[0] += Markup('<br/><a href="%s">%s</a>') % (
+                inv['qr_code_url'], _('View on myDATA'))
+        if partner_report:
+            parts.append(section(_('Partner'), partner_report))
+        if report['lines']:
+            parts.append(section(_('Mapping'), report['lines']))
+        if payment_lines:
+            parts.append(section(_('Payment'), payment_lines))
+        if report['warnings']:
+            parts.append(section(_('Warnings'), report['warnings']))
+        return Markup('<br/><br/>').join(parts)
