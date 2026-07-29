@@ -597,6 +597,17 @@ class TestMyDataFetchCancellations(TestMyDataFetchCommon):
             self._cancellation('400001234567002'))
         self.assertEqual(move.state, 'posted')
         self.assertTrue(move.activity_ids)
+        self.assertTrue(any('400009999999999' in (m.body or '')
+                            for m in move.message_ids))
+
+    def test_reset_to_draft_bill_gets_activity_not_cancelled(self):
+        move = self._make_fetched_bill('400001234567004')
+        move.action_post()
+        move.button_draft()
+        self.company._l10n_gr_edi_process_cancellations(
+            self._cancellation('400001234567004'))
+        self.assertEqual(move.state, 'draft')
+        self.assertTrue(move.activity_ids)
 
     def test_unknown_mark_is_ignored(self):
         # must not raise

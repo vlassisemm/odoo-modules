@@ -591,7 +591,8 @@ class ResCompany(models.Model):
                 continue
             if move.state == 'cancel':
                 continue  # idempotent on refetch
-            if move.state == 'draft' and move.l10n_gr_edi_state == 'bill_fetched':
+            if (move.state == 'draft' and not move.posted_before
+                    and move.l10n_gr_edi_state == 'bill_fetched'):
                 move.button_cancel()
                 move.message_post(
                     body=_('Invoice cancelled by the issuer on myDATA '
