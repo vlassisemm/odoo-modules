@@ -11,6 +11,7 @@ from odoo import _, api, fields, models, Command
 from odoo.tools import float_compare
 from odoo.addons.l10n_gr_edi.models.preferred_classification import (
     INVOICE_TYPES_HAVE_EXPENSE,
+    INVOICE_TYPES_SELECTION,
     TAX_EXEMPTION_CATEGORY_SELECTION,
 )
 
@@ -26,6 +27,10 @@ FETCH_DEFAULT_TIMEOUT = 30
 VAT_CATEGORY_PERCENT = {
     1: 24.0, 2: 13.0, 3: 6.0, 4: 17.0, 5: 9.0, 6: 4.0, 7: 0.0, 9: 3.0, 10: 4.0,
 }
+# Percentages a positive charge must never be matched on: a purchase tax at
+# such a rate is a VAT tax, and hanging it off a fees/stamp-duty/other-taxes
+# charge would corrupt the VAT return.
+VAT_PERCENTS = frozenset(VAT_CATEGORY_PERCENT.values())
 # Appendix 8.4/8.6/8.7/8.5 — percent-based categories only; absent codes are
 # amount-based and always fall back to an explicit line.
 WITHHELD_PERCENT = {
@@ -56,17 +61,6 @@ TAX_TOTALS_SPEC = {
     4: ('stamp_duty', 1), 5: ('deductions', -1),
 }
 
-PAYMENT_METHOD_LABELS = {
-    1: 'Domestic business payment account',
-    2: 'Foreign business payment account',
-    3: 'Cash',
-    4: 'Cheque',
-    5: 'On credit',
-    6: 'Web banking',
-    7: 'POS / e-POS',
-    8: 'IRIS instant payment',
-}
-
 
 def _el_text(element, path):
     """findtext with None for missing/empty, namespace-agnostic ({*} paths)."""
@@ -92,6 +86,7 @@ class ResCompany(models.Model):
     l10n_gr_edi_fetch_mark = fields.Char(
         string='myDATA Fetch Watermark',
         copy=False,
+        groups='base.group_system',
         help='Highest myDATA MARK processed by the vendor-bill fetch cron. '
              'Clear it to re-fetch the last 90 days (already-imported bills are skipped).',
     )
@@ -282,7 +277,8 @@ class ResCompany(models.Model):
         if candidates:
             exact_company = candidates.filtered(lambda p: p.company_id == self)
             pool = exact_company or candidates
-            partner = pool.sorted(key=lambda p: (not p.is_company, p.id))[:1]
+            partner = pool.sorted(
+                key=lambda p: (not p.active, not p.is_company, p.id))[:1]
             report.append(_('Partner matched by VAT: %s', partner.display_name))
             return partner, report
         vals = {
@@ -291,9 +287,13 @@ class ResCompany(models.Model):
             'is_company': True,
             'supplier_rank': 1,
             'company_id': False,
-            'category_id': [Command.link(
-                self.env.ref('l10n_gr_edi.res_partner_category_mydata_auto').id)],
         }
+        # Ships as module data, but a database where it was removed must still
+        # get its vendor bills - tag the partner only when the record is there.
+        tag = self.env.ref('l10n_gr_edi.res_partner_category_mydata_auto',
+                           raise_if_not_found=False)
+        if tag:
+            vals['category_id'] = [Command.link(tag.id)]
         if issuer['country']:
             country = self.env['res.country'].search(
                 [('code', '=', issuer['country'])], limit=1)
@@ -309,6 +309,9 @@ class ResCompany(models.Model):
             vals['l10n_gr_edi_branch_number'] = issuer['branch']
         partner = Partner.create(vals)
         report.append(_('Partner auto-created from myDATA: %s', partner.display_name))
+        if not tag:
+            report.append(_('The "myDATA Auto-created" partner tag is missing from '
+                            'this database — partner created without it.'))
         if is_greek:
             report.append(self._l10n_gr_edi_enrich_partner_from_afm(partner))
         return partner, report
@@ -326,6 +329,21 @@ class ResCompany(models.Model):
             'other_taxes': _('Other taxes'),
             'deductions': _('Deductions'),
         }[key]
+
+    @api.model
+    def _l10n_gr_edi_payment_method_label(self, code):
+        """myDATA appendix 8.1 payment method code -> label. Built here rather
+        than as a module constant so the labels are extracted and translated."""
+        return {
+            1: _('Domestic business payment account'),
+            2: _('Foreign business payment account'),
+            3: _('Cash'),
+            4: _('Cheque'),
+            5: _('On credit'),
+            6: _('Web banking'),
+            7: _('POS / e-POS'),
+            8: _('IRIS instant payment'),
+        }.get(code, code)
 
     def _l10n_gr_edi_match_purchase_tax(self, percent):
         self.ensure_one()
@@ -407,8 +425,12 @@ class ResCompany(models.Model):
                 label = self._l10n_gr_edi_charge_label(label_key)
                 category = line.get(category_key) if category_key else None
                 pct = table.get(category) if (table and category) else None
+                # Withheld/deductions are negative, so their rates can never be
+                # confused with a VAT rate; a positive charge whose rate happens
+                # to equal one (other taxes category 3 is 4%) must not be matched.
+                collides = bool(pct) and charge_sign > 0 and pct in VAT_PERCENTS
                 charge_tax = (self._l10n_gr_edi_match_purchase_tax(charge_sign * pct)
-                              if pct else self.env['account.tax'])
+                              if pct and not collides else self.env['account.tax'])
                 if charge_tax:
                     tax_ids.append(charge_tax.id)
                     report['lines'].append(_(
@@ -422,9 +444,17 @@ class ResCompany(models.Model):
                         'price_unit': sign * charge_sign * amount,
                         'tax_ids': [Command.set([])],
                     }))
-                    report['warnings'].append(_(
-                        'Line %(n)s: %(label)s %(amount).2f added as a separate line '
-                        '(no matching tax).', n=number, label=label, amount=amount))
+                    if collides:
+                        report['warnings'].append(_(
+                            'Line %(n)s: %(label)s %(amount).2f added as a separate '
+                            'line — its %(pct)s%% rate is also a VAT rate, so it was '
+                            'not mapped to a tax.',
+                            n=number, label=label, amount=amount, pct=pct))
+                    else:
+                        report['warnings'].append(_(
+                            'Line %(n)s: %(label)s %(amount).2f added as a separate '
+                            'line (no matching tax).',
+                            n=number, label=label, amount=amount))
 
             commands.append(Command.create({
                 'name': descr,
@@ -543,9 +573,13 @@ class ResCompany(models.Model):
 
     def _l10n_gr_edi_build_fetch_note(self, inv, partner_report, report):
         header = inv['header']
+        invoice_type = header['invoice_type']
+        # The selection labels already carry the code ("2.1 - Service Rendered
+        # Invoice"); fall back to the bare code for anything unrecognised.
         source_lines = [
             _('MARK: %s', inv['mark']),
-            _('Invoice type: %s', header['invoice_type']),
+            _('Invoice type: %s',
+              dict(INVOICE_TYPES_SELECTION).get(invoice_type) or invoice_type),
             _('Reference: %(series)s/%(aa)s',
               series=header['series'] or '0', aa=header['aa'] or ''),
         ]
@@ -553,7 +587,7 @@ class ResCompany(models.Model):
             source_lines.append(_('UID: %s', inv['uid']))
         payment_lines = [
             _('%(label)s: %(amount).2f%(info)s',
-              label=PAYMENT_METHOD_LABELS.get(pm['type'], pm['type']),
+              label=self._l10n_gr_edi_payment_method_label(pm['type']),
               amount=pm['amount'],
               info=f" ({pm['info']})" if pm['info'] else '')
             for pm in inv['payment_methods']
@@ -615,6 +649,11 @@ class ResCompany(models.Model):
                            date=cancellation['cancellation_date']),
                     subtype_xmlid='mail.mt_note')
             else:
+                cancellation_mark = cancellation['cancellation_mark']
+                if cancellation_mark and any(
+                        cancellation_mark in (message.body or '')
+                        for message in move.message_ids):
+                    continue  # already flagged on an earlier run
                 note = _('Invoice cancelled by the issuer on myDATA '
                          '(cancellation MARK %(cmark)s, date %(date)s). '
                          'Manual review/reversal required.',
@@ -646,8 +685,9 @@ class ResCompany(models.Model):
             'aade-user-id': self.l10n_gr_edi_aade_id,
             'ocp-apim-subscription-key': self.l10n_gr_edi_aade_key,
         }
-        params = {'mark': self.l10n_gr_edi_fetch_mark or 0}
-        if not self.l10n_gr_edi_fetch_mark:
+        watermark = self.sudo().l10n_gr_edi_fetch_mark
+        params = {'mark': watermark or 0}
+        if not watermark:
             params['dateFrom'] = (
                 fields.Datetime.now() - timedelta(days=90)).strftime('%d/%m/%Y')
             params['dateTo'] = fields.Datetime.now().strftime('%d/%m/%Y')
@@ -727,5 +767,6 @@ class ResCompany(models.Model):
                     _logger.exception(
                         "myDATA fetch: failed to process cancellations for company %s",
                         company.name)
-                if docs['max_mark'] > int(company.l10n_gr_edi_fetch_mark or 0):
-                    company.sudo().l10n_gr_edi_fetch_mark = str(docs['max_mark'])
+                company_sudo = company.sudo()
+                if docs['max_mark'] > int(company_sudo.l10n_gr_edi_fetch_mark or 0):
+                    company_sudo.l10n_gr_edi_fetch_mark = str(docs['max_mark'])

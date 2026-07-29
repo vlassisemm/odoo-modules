@@ -264,6 +264,18 @@ class TestMyDataFetchPartner(TestMyDataFetchCommon):
         partner, _report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
         self.assertEqual(partner, existing)
 
+    def test_active_partner_beats_older_archived_one(self):
+        archived = self.env['res.partner'].create({
+            'name': 'Archived Vendor', 'vat': 'EL123456789', 'is_company': True,
+            'active': False,
+        })
+        active = self.env['res.partner'].create({
+            'name': 'Active Vendor', 'vat': 'EL123456789', 'is_company': True,
+        })
+        self.assertLess(archived.id, active.id)  # id order alone would pick the archived one
+        partner, _report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
+        self.assertEqual(partner, active)
+
     def test_create_minimal_greek_partner_tagged(self):
         partner, report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
         self.assertEqual(partner.vat, 'EL123456789')
@@ -272,6 +284,15 @@ class TestMyDataFetchPartner(TestMyDataFetchCommon):
         self.assertEqual(partner.supplier_rank, 1)
         tag = self.env.ref('l10n_gr_edi.res_partner_category_mydata_auto')
         self.assertIn(tag, partner.category_id)
+
+    def test_create_partner_survives_missing_tag_record(self):
+        # The tag ships as module data; a database where it was removed must
+        # still get its vendor bills, minus the tag.
+        self.env.ref('l10n_gr_edi.res_partner_category_mydata_auto').unlink()
+        partner, report = self.company._l10n_gr_edi_resolve_partner(self._issuer())
+        self.assertEqual(partner.vat, 'EL123456789')
+        self.assertFalse(partner.category_id)
+        self.assertTrue(any('tag' in line.lower() for line in report))
 
     def test_create_foreign_partner_with_address(self):
         issuer = self._issuer(
@@ -409,6 +430,22 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         fallback = [v for v in vals if 'tamp' in v['name']]
         self.assertEqual(len(fallback), 1)
         self.assertEqual(fallback[0]['price_unit'], 12.0)
+        self.assertTrue(report['warnings'])
+
+    def test_other_taxes_percent_colliding_with_vat_rate_falls_back(self):
+        # OTHER_TAXES_PERCENT[3] is 4.0, which is also a myDATA VAT rate
+        # (categories 6 and 10). Matching it would hang a purchase VAT tax off
+        # an other-taxes charge and corrupt the VAT return.
+        tax_p4 = self._find_or_create_purchase_tax(4.0)
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(other_taxes_amount=40.0, other_taxes_percent_category=3),
+        ]))
+        vals = self._created_vals(commands)
+        for line_vals in vals:
+            self.assertNotIn(tax_p4.id, line_vals['tax_ids'][0][2])
+        fallback = [v for v in vals if 'ther taxes' in v['name']]
+        self.assertEqual(len(fallback), 1)
+        self.assertEqual(fallback[0]['price_unit'], 40.0)
         self.assertTrue(report['warnings'])
 
     def test_quantity_kept_when_division_exact(self):
@@ -572,6 +609,18 @@ class TestMyDataFetchNote(TestMyDataFetchCommon):
         self.assertIn('Cash', html)              # payment method label
         self.assertNotIn('Warning', html)        # no warnings section when clean
 
+    def test_note_shows_invoice_type_label(self):
+        move, inv, report = self._build_move()
+        html = str(self.company._l10n_gr_edi_build_fetch_note(inv, [], report))
+        self.assertIn('2.1', html)
+        self.assertIn('Service Rendered Invoice', html)
+
+    def test_note_unknown_invoice_type_falls_back_to_code(self):
+        move, inv, report = self._build_move()
+        inv['header']['invoice_type'] = '9.9'
+        html = str(self.company._l10n_gr_edi_build_fetch_note(inv, [], report))
+        self.assertIn('9.9', html)
+
     def test_note_escapes_payload_html(self):
         move, inv, report = self._build_move()
         inv['header']['invoice_type'] = '<script>alert(1)</script>'
@@ -640,6 +689,17 @@ class TestMyDataFetchCancellations(TestMyDataFetchCommon):
         self.assertTrue(move.activity_ids)
         self.assertTrue(any('400009999999999' in (m.body or '')
                             for m in move.message_ids))
+
+    def test_posted_bill_cancellation_is_idempotent(self):
+        move = self._make_fetched_bill('400001234567005')
+        move.action_post()
+        self.company._l10n_gr_edi_process_cancellations(
+            self._cancellation('400001234567005'))
+        self.company._l10n_gr_edi_process_cancellations(
+            self._cancellation('400001234567005'))
+        notes = [m for m in move.message_ids if '400009999999999' in (m.body or '')]
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(len(move.activity_ids), 1)
 
     def test_reset_to_draft_bill_gets_activity_not_cancelled(self):
         move = self._make_fetched_bill('400001234567004')
@@ -744,6 +804,10 @@ class TestMyDataFetchFlow(TestMyDataFetchCommon):
             session_cls.return_value.get.side_effect = fake_get
             self.env['res.company']._cron_l10n_gr_edi_fetch_invoices()
         return calls
+
+    def test_fetch_watermark_field_is_system_only(self):
+        field = self.env['res.company']._fields['l10n_gr_edi_fetch_mark']
+        self.assertEqual(field.groups, 'base.group_system')
 
     def test_cron_creates_bill_with_document_note_and_watermark(self):
         self._run_cron_with_pages([_requested_doc(_invoice_xml())])
