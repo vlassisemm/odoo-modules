@@ -403,7 +403,7 @@ class ResCompany(models.Model):
                         'price_unit': sign * charge_sign * amount,
                         'tax_ids': [Command.set([])],
                     }))
-                    report['lines'].append(_(
+                    report['warnings'].append(_(
                         'Line %(n)s: %(label)s %(amount).2f added as a separate line '
                         '(no matching tax).', n=number, label=label, amount=amount))
 
@@ -414,6 +414,9 @@ class ResCompany(models.Model):
                 'tax_ids': [Command.set(tax_ids)],
             }))
 
+        # Document-level taxes_totals entries have no product/base line of their own to
+        # attach a tax to, so matching against the CoA would double-count against
+        # whatever tax already applies to the invoice lines — always an explicit line.
         for tax_total in inv['taxes_totals']:
             label_key, t_sign = TAX_TOTALS_SPEC.get(tax_total['tax_type'], ('other_taxes', 1))
             label = self._l10n_gr_edi_charge_label(label_key)
@@ -424,7 +427,7 @@ class ResCompany(models.Model):
                 'price_unit': t_sign * tax_total['tax_amount'],
                 'tax_ids': [Command.set([])],
             }))
-            report['lines'].append(_(
+            report['warnings'].append(_(
                 'Document-level %(label)s %(amount).2f added as a separate line.',
                 label=label, amount=tax_total['tax_amount']))
         return commands, report

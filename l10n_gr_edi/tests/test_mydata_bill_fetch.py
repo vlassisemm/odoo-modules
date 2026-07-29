@@ -350,23 +350,25 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
                          [Command.set([self.tax_p24.id, self.withholding_20.id])])
 
     def test_withholding_fallback_line_when_amount_based(self):
-        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
             self._line(withheld_amount=50.0, withheld_percent_category=17),  # amount-based
         ]))
         vals = self._created_vals(commands)
         self.assertEqual(len(vals), 2)
         fallback = [v for v in vals if v['price_unit'] < 0][0]
         self.assertEqual(fallback['price_unit'], -50.0)
+        self.assertTrue(report['warnings'])
 
     def test_stamp_duty_fallback_positive(self):
         # no 1.2% purchase tax in CoA -> explicit positive line
-        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
             self._line(stamp_duty_amount=12.0, stamp_duty_percent_category=1),
         ]))
         vals = self._created_vals(commands)
         fallback = [v for v in vals if 'tamp' in v['name']]
         self.assertEqual(len(fallback), 1)
         self.assertEqual(fallback[0]['price_unit'], 12.0)
+        self.assertTrue(report['warnings'])
 
     def test_quantity_kept_when_division_exact(self):
         commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
@@ -386,7 +388,7 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         self.assertIn('3', vals['name'])
 
     def test_taxes_totals_document_level_lines(self):
-        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv(
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv(
             taxes_totals=[
                 {'tax_type': 1, 'tax_category': 3, 'underlying_value': 1000.0, 'tax_amount': 200.0},
                 {'tax_type': 4, 'tax_category': 1, 'underlying_value': None, 'tax_amount': 12.0},
@@ -396,6 +398,7 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         self.assertEqual(len(vals), 3)  # 1 product line + 2 doc-level charge lines
         self.assertEqual(vals[1]['price_unit'], -200.0)  # withheld: negative
         self.assertEqual(vals[2]['price_unit'], 12.0)    # stamp duty: positive
+        self.assertEqual(len(report['warnings']), 2)
 
     def test_rec_type_7_negates(self):
         commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
