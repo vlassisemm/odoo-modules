@@ -513,6 +513,8 @@ class TestMyDataFetchNote(TestMyDataFetchCommon):
         warnings = self.company._l10n_gr_edi_check_summary(move, inv)
         self.assertEqual(len(warnings), 1)
         self.assertIn('9999.00', warnings[0])
+        self.assertIn('9000.00', warnings[0])
+        self.assertIn(f'{move.amount_total:.2f}', warnings[0])
 
     def test_note_contains_sections(self):
         move, inv, report = self._build_move(payments_xml=(
@@ -534,3 +536,21 @@ class TestMyDataFetchNote(TestMyDataFetchCommon):
         inv['header']['invoice_type'] = '<script>alert(1)</script>'
         note = self.company._l10n_gr_edi_build_fetch_note(inv, [], report)
         self.assertNotIn('<script>', str(note))
+
+    def test_note_qr_link_rendered_for_http_url(self):
+        move, inv, report = self._build_move(invoice_extra=(
+            '<inv:qrCodeUrl>https://mydata.aade.gr/some/path</inv:qrCodeUrl>'
+        ))
+        note = self.company._l10n_gr_edi_build_fetch_note(inv, [], report)
+        html = str(note)
+        self.assertIn('<a href="https://mydata.aade.gr/some/path">', html)
+        self.assertIn('View on myDATA', html)
+
+    def test_note_qr_link_omitted_for_non_http_scheme(self):
+        move, inv, report = self._build_move(invoice_extra=(
+            '<inv:qrCodeUrl>javascript:alert(1)</inv:qrCodeUrl>'
+        ))
+        note = self.company._l10n_gr_edi_build_fetch_note(inv, [], report)
+        html = str(note)
+        self.assertNotIn('<a ', html)
+        self.assertNotIn('javascript:alert(1)', html)

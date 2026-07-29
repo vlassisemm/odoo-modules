@@ -557,9 +557,10 @@ class ResCompany(models.Model):
             return Markup('<b>%s</b><br/>%s') % (title, body)
 
         parts = [section(_('Fetched from myDATA'), source_lines)]
-        if inv['qr_code_url']:
+        qr_code_url = inv['qr_code_url']
+        if qr_code_url and qr_code_url.startswith(('http://', 'https://')):
             parts[0] += Markup('<br/><a href="%s">%s</a>') % (
-                inv['qr_code_url'], _('View on myDATA'))
+                qr_code_url, _('View on myDATA'))
         if partner_report:
             parts.append(section(_('Partner'), partner_report))
         if report['lines']:
