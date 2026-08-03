@@ -14,6 +14,59 @@ official one. It is versioned as *upstream base + local lineage*:
   newer upstream snapshot, listing the re-applied patches). This file — not
   git alone — is the authoritative record of divergence from upstream.
 
+## [1.2] - 2026-08-03 — [re-port]
+
+Upstream 19.0 snapshot advanced to `8e07e45a2393` (2026-05-27) and selected
+upstream changes backported from `saas-19.4`. All prior local patches
+(UTF-8/rounding, vendor-bill fetch) remain applied; no conflicts beyond
+context shifts.
+
+### Added
+- **Greek CIUS (Peppol BIS 3.0) for B2G e-invoicing** — backport of upstream
+  `699e25230382` ([ADD] l10n_gr_edi: implement CIUS for Greece, saas-19.4),
+  taken verbatim at its ADD state (which targets the 19.0-era
+  `account_edi_ubl_cii` dict-node builder API — all hooks verified present
+  in 19.0):
+  - New `account.edi.xml.ubl_gr` builder (`models/account_edi_xml_ubl_gr.py`):
+    GR-R-001 composite invoice number
+    (`VAT|date|branch|inv_type|series|serial`), MARK as
+    `AdditionalDocumentReference` (`##M.AR.K##`), project/contract references,
+    billing reference on credit notes, contracting-authority party
+    identification, CPV item classification, and the Greek CIUS business-rule
+    constraints (GR-R-003/004/006/007, GR-BT-10/25/46/158).
+  - New fields: `account.move.l10n_gr_edi_budget_type` /
+    `l10n_gr_edi_project_reference` / `l10n_gr_edi_contract_reference`;
+    `account.move.line.l10n_gr_edi_cpv_code` (computed from product);
+    `product.template.l10n_gr_edi_cpv_code`;
+    `res.partner.l10n_gr_edi_contracting_authority_name` / `_code`
+    (format-validated).
+  - `ubl_gr` registered as partner `invoice_edi_format` (suggested when
+    contracting-authority data is set); UBL XML generation and Peppol sending
+    are held back until the myDATA MARK is received
+    (`_need_ubl_cii_xml` / `_is_applicable_to_move` overrides + send alert).
+  - New dependency: `account_edi_ubl_cii` (auto-installed with `account`).
+  - Tests: `tests/test_xml_ubl_gr.py` + `grcius_out_invoice.xml` /
+    `grcius_out_refund.xml` fixtures. Fixtures taken at the `91b56353` state
+    (item `Name`-only, no `Description`) — that is what the 19.0 UBL export
+    actually emits; the ADD-state fixtures fail against 19.0 core.
+
+### Fixed
+- **Invoice report/product form UI** — upstream 19.0 `8e07e45a2393`: myDATA
+  QR code moves to a new page when space runs out; myDATA classification
+  group no longer shrinks on the product form.
+- Tests: write `False` instead of `''` to selection fields (upstream
+  `feed371f5e27`, test-only portion).
+
+### Not ported (require saas-19.4 core, revisit on Odoo 20)
+- `ir.access.csv` conversion (`e7cc76b2`) — 19.0 uses `ir.model.access.csv`.
+- `peppol_eas/peppol_endpoint` → `routing_scheme/routing_endpoint` rename
+  (`6f8c2526`) — fields don't exist in 19.0 (the `91b56353` fixture update
+  *was* taken, see above).
+- `account.move.is_refund()` cleanup (`686b2eb6`) — method absent in 19.0.
+- Product-form `position="inside"` layout fix (`b64d2ef1`) — depends on a
+  saas `account` view change.
+- Manifest harmonization and saas i18n exports.
+
 ## [1.1] - 2026-07-29 — [local]
 
 ### Changed

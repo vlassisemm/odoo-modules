@@ -92,6 +92,22 @@ class AccountMove(models.Model):
         copy=False,
         help='Set on vendor bills automatically created from myDATA RequestDocs.',
     )
+    l10n_gr_edi_budget_type = fields.Selection([
+        ('1', '1 - Ordinary Budget'),
+        ('2', '2 - PDE (Public Investment Budget)'),
+        ('3', '3 - Other Budget')
+        ], string="Budget Type"
+    )
+    l10n_gr_edi_project_reference = fields.Char(
+        string='Project reference number',
+        help='ADA or Enaritmos number',
+    )
+    l10n_gr_edi_contract_reference = fields.Char(
+        string='Contract ADAM',
+        help='Internet contract posting number(ADAM) of the Central Electronic Register of Public Procurement (KIMDIS)',
+        default='0',
+        required=True,
+    )
 
     def _auto_init(self):
         """
@@ -105,6 +121,9 @@ class AccountMove(models.Model):
             ('l10n_gr_edi_payment_method', 'varchar'),
             ('l10n_gr_edi_attachment_id', 'int4'),
             ('l10n_gr_edi_is_fetched', 'bool'),
+            ('l10n_gr_edi_budget_type', 'varchar'),
+            ('l10n_gr_edi_project_reference', 'varchar'),
+            ('l10n_gr_edi_contract_reference', 'varchar'),
         ):
             if not column_exists(self.env.cr, 'account_move', column_name):
                 create_column(self.env.cr, 'account_move', column_name, column_type)
@@ -802,3 +821,19 @@ class AccountMove(models.Model):
             raise UserError(_("Some of the selected moves does not meet the requirements to be sent to myDATA."))
 
         self.l10n_gr_edi_try_send_expense_classification()
+
+    ################################################################################
+    # Peppol/UBL helpers
+    ################################################################################
+
+    def _need_ubl_cii_xml(self, ubl_cii_format):
+        """
+        Override the generic check to postpone the creation of the UBL file
+        for Greek B2G invoices until we actually receive the `l10n_gr_edi_mark`
+        from myDATA.
+        """
+        if not super()._need_ubl_cii_xml(ubl_cii_format):
+            return False
+        if ubl_cii_format == 'ubl_gr':
+            return bool(self.l10n_gr_edi_mark)
+        return True
