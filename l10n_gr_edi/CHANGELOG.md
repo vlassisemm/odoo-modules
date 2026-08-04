@@ -14,6 +14,17 @@ official one. It is versioned as *upstream base + local lineage*:
   newer upstream snapshot, listing the re-applied patches). This file — not
   git alone — is the authoritative record of divergence from upstream.
 
+## [1.3.1] - 2026-08-04 — [local]
+
+### Fixed
+- VAT resolution was refused on every domestic bill: the Greek chart's
+  auto-applied "Domestic" fiscal positions list the Import/EU taxes as
+  selectable destinations with `original_tax_ids` pointing at the domestic
+  taxes, so `map_tax(24% G)` returns multiple candidates. A tax that itself
+  lists the fiscal position (`tax.fiscal_position_ids`) is now kept unmapped —
+  only taxes foreign to the position go through `map_tax`. Refusal warning
+  reworded ("provides no single X% replacement").
+
 ## [1.3] - 2026-08-04 — [local]
 
 Vendor-bill fetch: VAT amounts now land on real purchase taxes instead of

@@ -383,15 +383,18 @@ class ResCompany(models.Model):
             raise_if_not_found=False)
         if not tax or not tax.active:
             return empty, None
-        if fiscal_position:
+        if fiscal_position and fiscal_position not in tax.fiscal_position_ids:
+            # A tax that itself lists the position (e.g. the domestic taxes
+            # under the Greek chart's auto-applied "Domestic" positions) is
+            # already valid under it; only map taxes foreign to the position.
             mapped = fiscal_position.map_tax(tax)
             if (len(mapped) != 1 or mapped.amount_type != 'percent'
                     or float_compare(mapped.amount, vat_pct, precision_digits=2) != 0):
                 return empty, _(
-                    'Fiscal position "%(fpos)s" maps %(tax)s to a different '
-                    'rate — the VAT amount was kept as a separate line to '
-                    'preserve the declared totals.',
-                    fpos=fiscal_position.name, tax=tax.name)
+                    'Fiscal position "%(fpos)s" provides no single %(pct)s%% '
+                    'replacement for %(tax)s — the VAT amount was kept as a '
+                    'separate line to preserve the declared totals.',
+                    fpos=fiscal_position.name, pct=vat_pct, tax=tax.name)
             tax = mapped
         return tax, None
 

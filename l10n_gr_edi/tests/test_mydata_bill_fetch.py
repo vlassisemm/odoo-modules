@@ -617,6 +617,23 @@ class TestMyDataFetchVatResolution(TestMyDataFetchCommon):
         self.assertEqual(tax, tax_p24_s_eu)
         self.assertFalse(warning)
 
+    def test_fiscal_position_listing_the_tax_keeps_it(self):
+        # The Greek chart's auto-applied "Domestic" position lists the
+        # domestic taxes AND the Import/EU taxes (with original_tax_ids
+        # pointing at the domestic ones), so map_tax(24% G) yields multiple
+        # candidates. A tax that itself lists the position is already valid
+        # under it and must be kept unmapped.
+        tax_p24_s_eu = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p24_S_eu')
+        tax_p24_s_eu.original_tax_ids = [Command.link(self.tax_p24_s.id)]
+        fpos = self.env['account.fiscal.position'].create({
+            'name': 'Domestic-like', 'company_id': self.company.id,
+            'tax_ids': [Command.link(self.tax_p24_s.id),
+                        Command.link(tax_p24_s_eu.id)],
+        })
+        tax, warning = self.company._l10n_gr_edi_resolve_vat_tax(24.0, '2.1', fpos)
+        self.assertEqual(tax, self.tax_p24_s)
+        self.assertFalse(warning)
+
     def test_fiscal_position_rate_change_refused(self):
         tax_p0_s = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p0_S')
         tax_p0_s.original_tax_ids = [Command.link(self.tax_p24_s.id)]
