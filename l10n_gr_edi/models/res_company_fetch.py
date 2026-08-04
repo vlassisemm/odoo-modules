@@ -387,15 +387,21 @@ class ResCompany(models.Model):
             # A tax that itself lists the position (e.g. the domestic taxes
             # under the Greek chart's auto-applied "Domestic" positions) is
             # already valid under it; only map taxes foreign to the position.
+            # The position wins only when it expresses exactly one same-rate
+            # replacement. A deliberate different-rate mapping conflicts with
+            # the declared payload rate and flags for review; an empty or
+            # ambiguous mapping (e.g. the Aegean position, whose tax list is
+            # empty) expresses no preference, so the payload rate stands.
             mapped = fiscal_position.map_tax(tax)
-            if (len(mapped) != 1 or mapped.amount_type != 'percent'
-                    or float_compare(mapped.amount, vat_pct, precision_digits=2) != 0):
+            if (len(mapped) == 1 and mapped.amount_type == 'percent'
+                    and float_compare(mapped.amount, vat_pct, precision_digits=2) == 0):
+                tax = mapped
+            elif len(mapped) == 1:
                 return empty, _(
-                    'Fiscal position "%(fpos)s" provides no single %(pct)s%% '
-                    'replacement for %(tax)s — the VAT amount was kept as a '
-                    'separate line to preserve the declared totals.',
-                    fpos=fiscal_position.name, pct=vat_pct, tax=tax.name)
-            tax = mapped
+                    'Fiscal position "%(fpos)s" maps %(tax)s to a different '
+                    'rate — the VAT amount was kept as a separate line to '
+                    'preserve the declared totals.',
+                    fpos=fiscal_position.name, tax=tax.name)
         return tax, None
 
     def _l10n_gr_edi_prepare_line_vals(self, inv, fiscal_position=None):

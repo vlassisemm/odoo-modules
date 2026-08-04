@@ -2,7 +2,7 @@
 {
     'author': 'Odoo',
     'name': 'Greece - myDATA',
-    'version': '1.3.1',
+    'version': '1.3.2',
     'category': 'Accounting/Localizations',
     'summary': """Connect to myDATA API implementation for Greece""",
     'description': """

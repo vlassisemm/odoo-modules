@@ -14,6 +14,18 @@ official one. It is versioned as *upstream base + local lineage*:
   newer upstream snapshot, listing the re-applied patches). This file — not
   git alone — is the authoritative record of divergence from upstream.
 
+## [1.3.2] - 2026-08-04 — [local]
+
+### Fixed
+- A fiscal position expressing no VAT preference no longer blocks
+  resolution: the Aegean "Domestic" position ships with an empty tax list
+  (and x2many reads skip archived taxes), which produced an empty
+  `map_tax` result and a fallback line on every bill of Aegean-registered
+  suppliers charging the mainland rate. The hierarchy is now: the position
+  wins when it maps to exactly one same-rate replacement; a deliberate
+  different-rate mapping still falls back with a warning; an empty or
+  ambiguous mapping expresses no preference and the payload rate stands.
+
 ## [1.3.1] - 2026-08-04 — [local]
 
 ### Fixed

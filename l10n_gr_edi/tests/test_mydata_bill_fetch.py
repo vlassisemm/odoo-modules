@@ -634,8 +634,20 @@ class TestMyDataFetchVatResolution(TestMyDataFetchCommon):
         self.assertEqual(tax, self.tax_p24_s)
         self.assertFalse(warning)
 
+    def test_fiscal_position_without_mapping_keeps_base_tax(self):
+        # The Aegean "Domestic" position ships with an empty tax list, so
+        # map_tax filters out position-bound taxes and returns nothing — no
+        # preference is expressed and the payload rate stands.
+        fpos = self.env['account.fiscal.position'].create({
+            'name': 'Aegean-like (no mappings)', 'company_id': self.company.id,
+        })
+        tax, warning = self.company._l10n_gr_edi_resolve_vat_tax(24.0, '2.1', fpos)
+        self.assertEqual(tax, self.tax_p24_s)
+        self.assertFalse(warning)
+
     def test_fiscal_position_rate_change_refused(self):
         tax_p0_s = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p0_S')
+        tax_p0_s.active = True  # ships archived; x2many reads skip inactive
         tax_p0_s.original_tax_ids = [Command.link(self.tax_p24_s.id)]
         fpos = self.env['account.fiscal.position'].create({
             'name': 'Exempt', 'company_id': self.company.id,
@@ -697,6 +709,7 @@ class TestMyDataFetchBillVals(TestMyDataFetchCommon):
     def test_fiscal_position_rate_change_falls_back(self):
         tax_p24_s = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p24_S')
         tax_p0_s = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p0_S')
+        tax_p0_s.active = True  # ships archived; x2many reads skip inactive
         tax_p0_s.original_tax_ids = [Command.link(tax_p24_s.id)]
         fpos = self.env['account.fiscal.position'].create({
             'name': 'Exempt vendor', 'company_id': self.company.id,
