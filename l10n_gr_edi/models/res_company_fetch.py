@@ -48,6 +48,21 @@ OTHER_TAXES_PERCENT = {
 
 CREDIT_INVOICE_TYPES = ('5.1', '5.2')
 
+# Document-level goods/services signal: sales-of-goods invoice types map to
+# the domestic "G" purchase VAT taxes of the Greek chart template, service
+# types to "S". Types without a reliable signal (3.x acquisition titles,
+# 5.x credit notes, 8.x specials, ...) resolve to nothing and keep the
+# explicit fallback line.
+INVOICE_TYPE_VAT_SUFFIX = {
+    '1.1': 'G', '1.2': 'G', '1.3': 'G', '1.4': 'G', '1.5': 'G', '1.6': 'G',
+    '11.1': 'G', '11.3': 'G',
+    '2.1': 'S', '2.2': 'S', '2.3': 'S', '2.4': 'S',
+    '11.2': 'S', '11.4': 'S',
+}
+# Logistics documents (no fiscal value): no vendor bill is created for them.
+# Future: delivery notes (9.3) could feed inventory receipts instead.
+NON_FISCAL_INVOICE_TYPES = frozenset({'9.3'})
+
 # (amount_key, category_key, percent_table, label_key, sign) — sign -1 reduces the payable
 LINE_CHARGES = (
     ('withheld_amount', 'withheld_percent_category', WITHHELD_PERCENT, 'withheld', -1),
@@ -349,11 +364,43 @@ class ResCompany(models.Model):
         ])
         return taxes if len(taxes) == 1 else self.env['account.tax']
 
-    def _l10n_gr_edi_prepare_line_vals(self, inv):
+    def _l10n_gr_edi_resolve_vat_tax(self, vat_pct, invoice_type, fiscal_position):
+        """Resolve a payload VAT rate to a concrete purchase tax.
+
+        Picks the Greek chart-template G/S tax for the document type and maps
+        it through the fiscal position when one applies. Returns
+        ``(tax, warning)``: an empty recordset when unresolvable, and a warning
+        string only when the fiscal position mapping was refused because it
+        changes the rate (applying it would break payload reconciliation).
+        """
+        self.ensure_one()
+        empty = self.env['account.tax']
+        suffix = INVOICE_TYPE_VAT_SUFFIX.get(invoice_type)
+        if not suffix:
+            return empty, None
+        tax = self.env.ref(
+            f'account.{self.id}_l10n_gr_tax_p{vat_pct:g}_{suffix}',
+            raise_if_not_found=False)
+        if not tax or not tax.active:
+            return empty, None
+        if fiscal_position:
+            mapped = fiscal_position.map_tax(tax)
+            if (len(mapped) != 1 or mapped.amount_type != 'percent'
+                    or float_compare(mapped.amount, vat_pct, precision_digits=2) != 0):
+                return empty, _(
+                    'Fiscal position "%(fpos)s" maps %(tax)s to a different '
+                    'rate — the VAT amount was kept as a separate line to '
+                    'preserve the declared totals.',
+                    fpos=fiscal_position.name, tax=tax.name)
+            tax = mapped
+        return tax, None
+
+    def _l10n_gr_edi_prepare_line_vals(self, inv, fiscal_position=None):
         """Map payload lines to account.move.line create-commands.
         Invariant: every payload amount lands in a matched tax or an explicit
         fallback line, so the bill total always reconciles with the payload."""
         self.ensure_one()
+        invoice_type = (inv.get('header') or {}).get('invoice_type')
         commands = []
         report = {'lines': [], 'warnings': []}
         for line in inv['lines']:
@@ -388,13 +435,13 @@ class ResCompany(models.Model):
                     'Line %(n)s: unknown VAT category %(cat)s — no VAT applied.',
                     n=number, cat=line['vat_category']))
             else:
-                vat_tax = self._l10n_gr_edi_match_purchase_tax(vat_pct)
+                vat_tax, fpos_warning = self._l10n_gr_edi_resolve_vat_tax(
+                    vat_pct, invoice_type, fiscal_position)
                 if vat_tax:
                     tax_ids.append(vat_tax.id)
-                    report['lines'].append(_(
-                        'Line %(n)s: VAT %(pct)s%% mapped to tax "%(tax)s".',
-                        n=number, pct=vat_pct, tax=vat_tax.name))
                 elif line['vat_amount']:
+                    if fpos_warning:
+                        report['warnings'].append(fpos_warning)
                     commands.append(Command.create({
                         'name': _('VAT %(pct)s%% (no matching purchase tax) — line %(n)s',
                                   pct=vat_pct, n=number),
@@ -404,13 +451,14 @@ class ResCompany(models.Model):
                         'l10n_gr_edi_is_fetch_adjustment': True,
                     }))
                     report['warnings'].append(_(
-                        'Line %(n)s: no unique %(pct)s%% purchase tax found — '
-                        'VAT amount added as a separate line.', n=number, pct=vat_pct))
+                        'Line %(n)s: VAT %(pct)s%% could not be mapped to a '
+                        'purchase tax — VAT amount added as a separate line.',
+                        n=number, pct=vat_pct))
                 if line['vat_exemption_category']:
                     label = dict(TAX_EXEMPTION_CATEGORY_SELECTION).get(
                         str(line['vat_exemption_category']),
                         str(line['vat_exemption_category']))
-                    report['lines'].append(_(
+                    report['warnings'].append(_(
                         'Line %(n)s: VAT exemption category — %(label)s.',
                         n=number, label=label))
 
@@ -491,7 +539,9 @@ class ResCompany(models.Model):
     def _l10n_gr_edi_prepare_bill_vals(self, inv, partner):
         self.ensure_one()
         header = inv['header']
-        commands, report = self._l10n_gr_edi_prepare_line_vals(inv)
+        fiscal_position = self.env['account.fiscal.position'].sudo().with_company(
+            self)._get_fiscal_position(partner)
+        commands, report = self._l10n_gr_edi_prepare_line_vals(inv, fiscal_position)
         move_type = ('in_refund' if header['invoice_type'] in CREDIT_INVOICE_TYPES
                      else 'in_invoice')
         series = header['series']
@@ -505,6 +555,7 @@ class ResCompany(models.Model):
             'date': fields.Date.to_date(header['issue_date']),
             'ref': ref,
             'invoice_line_ids': commands,
+            'fiscal_position_id': fiscal_position.id,
             'l10n_gr_edi_is_fetched': True,
         }
         if header['invoice_type'] in INVOICE_TYPES_HAVE_EXPENSE:
@@ -721,6 +772,12 @@ class ResCompany(models.Model):
         the source invoice is skipped."""
         self.ensure_one()
         Move = self.env['account.move'].sudo()
+        if inv['header']['invoice_type'] in NON_FISCAL_INVOICE_TYPES:
+            _logger.debug(
+                'myDATA fetch: invoice skipped company_id=%s mark=%s '
+                'reason=non_fiscal_type invoice_type=%s',
+                self.id, inv['mark'], inv['header']['invoice_type'])
+            return Move.browse(), 0
         if inv['cancelled_by_mark']:
             _logger.debug(
                 'myDATA fetch: invoice skipped company_id=%s mark=%s '

@@ -374,16 +374,17 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.tax_p24 = cls._find_or_create_purchase_tax(24.0)
+        cls.tax_p24_s = cls.env.ref(f'account.{cls.company.id}_l10n_gr_tax_p24_S')
+        # Charge (withheld/fees/...) matching still uses the unique-percent
+        # search, so the custom withholding tax must stay unambiguous.
         cls.withholding_20 = cls._find_or_create_purchase_tax(-20.0)
-        for tax in (cls.tax_p24, cls.withholding_20):
-            cls.env['account.tax'].search([
-                ('company_id', '=', cls.company.id),
-                ('type_tax_use', '=', 'purchase'),
-                ('amount_type', '=', 'percent'),
-                ('amount', '=', tax.amount),
-                ('id', '!=', tax.id),
-            ]).active = False
+        cls.env['account.tax'].search([
+            ('company_id', '=', cls.company.id),
+            ('type_tax_use', '=', 'purchase'),
+            ('amount_type', '=', 'percent'),
+            ('amount', '=', cls.withholding_20.amount),
+            ('id', '!=', cls.withholding_20.id),
+        ]).active = False
 
     def _line(self, **overrides):
         line = {
@@ -399,8 +400,9 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         line.update(overrides)
         return line
 
-    def _inv(self, lines=None, taxes_totals=None):
-        return {'lines': lines or [self._line()], 'taxes_totals': taxes_totals or []}
+    def _inv(self, lines=None, taxes_totals=None, inv_type='2.1'):
+        return {'lines': lines or [self._line()], 'taxes_totals': taxes_totals or [],
+                'header': {'invoice_type': inv_type}}
 
     def _created_vals(self, commands):
         return [cmd[2] for cmd in commands]
@@ -419,21 +421,16 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
     def test_vat_tax_matched(self):
         commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv())
         vals = self._created_vals(commands)[0]
-        self.assertEqual(vals['tax_ids'], [Command.set([self.tax_p24.id])])
+        self.assertEqual(vals['tax_ids'], [Command.set([self.tax_p24_s.id])])
         self.assertEqual(vals['price_unit'], 1000.0)
         self.assertFalse(report['warnings'])
 
-    def test_ambiguous_vat_tax_falls_back_with_source_metadata(self):
-        self.env['account.tax'].create({
-            'name': 'Second purchase 24%',
-            'amount': 24.0,
-            'amount_type': 'percent',
-            'type_tax_use': 'purchase',
-            'company_id': self.company.id,
-        })
+    def test_no_signal_type_falls_back_with_source_metadata(self):
+        # 5.2 credit notes carry no goods/services signal, so the VAT amount
+        # stays on an explicit fallback line with the source metadata intact.
         commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
             self._line(line_number=7, vat_exemption_category=2),
-        ]))
+        ], inv_type='5.2'))
         vals = self._created_vals(commands)
         self.assertEqual(len(vals), 2)
         source = next(vals for vals in vals if vals['price_unit'] == 1000.0)
@@ -445,20 +442,17 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         self.assertTrue(report['warnings'])
 
     def test_vat_category_9_and_10_no_crash(self):
-        tax_p3 = self._find_or_create_purchase_tax(3.0)
-        self.env['account.tax'].search([
-            ('company_id', '=', self.company.id),
-            ('type_tax_use', '=', 'purchase'),
-            ('amount_type', '=', 'percent'),
-            ('amount', '=', 3.0),
-            ('id', '!=', tax_p3.id),
-        ]).active = False
-        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+        # Category 9 (3%) has no chart-template tax; category 10 (4%) resolves
+        # to a template tax that ships archived — both fall back to explicit
+        # lines without crashing.
+        commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
             self._line(vat_category=9, vat_amount=30.0),
             self._line(line_number=2, vat_category=10, vat_amount=40.0),
         ]))
         vals = self._created_vals(commands)
-        self.assertEqual(vals[0]['tax_ids'], [Command.set([tax_p3.id])])
+        adjustments = [v for v in vals if v.get('l10n_gr_edi_is_fetch_adjustment')]
+        self.assertEqual({v['price_unit'] for v in adjustments}, {30.0, 40.0})
+        self.assertEqual(len(report['warnings']), 2)
 
     def test_vat_fallback_line_when_no_tax(self):
         # 17% (Aegean islands rate) purchase tax does not exist in the CoA
@@ -483,7 +477,7 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         vals = self._created_vals(commands)
         self.assertEqual(len(vals), 1)
         self.assertEqual(vals[0]['tax_ids'],
-                         [Command.set([self.tax_p24.id, self.withholding_20.id])])
+                         [Command.set([self.tax_p24_s.id, self.withholding_20.id])])
 
     def test_withholding_fallback_line_when_amount_based(self):
         commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
@@ -573,6 +567,68 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         self.assertFalse(report['warnings'])
 
 
+class TestMyDataFetchVatResolution(TestMyDataFetchCommon):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.tax_p24_g = cls.env.ref(f'account.{cls.company.id}_l10n_gr_tax_p24_G')
+        cls.tax_p24_s = cls.env.ref(f'account.{cls.company.id}_l10n_gr_tax_p24_S')
+
+    def test_goods_type_resolves_g(self):
+        tax, warning = self.company._l10n_gr_edi_resolve_vat_tax(24.0, '1.1', None)
+        self.assertEqual(tax, self.tax_p24_g)
+        self.assertFalse(warning)
+
+    def test_service_type_resolves_s(self):
+        tax, warning = self.company._l10n_gr_edi_resolve_vat_tax(24.0, '2.1', None)
+        self.assertEqual(tax, self.tax_p24_s)
+        self.assertFalse(warning)
+
+    def test_no_signal_type_resolves_nothing(self):
+        for inv_type in ('3.1', '5.2', '8.1', None):
+            tax, warning = self.company._l10n_gr_edi_resolve_vat_tax(24.0, inv_type, None)
+            self.assertFalse(tax)
+            self.assertFalse(warning)
+
+    def test_rate_without_template_resolves_nothing(self):
+        tax, warning = self.company._l10n_gr_edi_resolve_vat_tax(3.0, '2.1', None)
+        self.assertFalse(tax)
+        self.assertFalse(warning)
+
+    def test_archived_tax_resolves_nothing(self):
+        self.tax_p24_s.active = False
+        try:
+            tax, _warning = self.company._l10n_gr_edi_resolve_vat_tax(24.0, '2.1', None)
+            self.assertFalse(tax)
+        finally:
+            self.tax_p24_s.active = True
+
+    def test_fiscal_position_same_rate_wins(self):
+        # Odoo 19 fiscal positions list *destination* taxes; the source side
+        # comes from original_tax_ids on the destination tax.
+        tax_p24_s_eu = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p24_S_eu')
+        tax_p24_s_eu.original_tax_ids = [Command.link(self.tax_p24_s.id)]
+        fpos = self.env['account.fiscal.position'].create({
+            'name': 'EU services', 'company_id': self.company.id,
+            'tax_ids': [Command.link(tax_p24_s_eu.id)],
+        })
+        tax, warning = self.company._l10n_gr_edi_resolve_vat_tax(24.0, '2.1', fpos)
+        self.assertEqual(tax, tax_p24_s_eu)
+        self.assertFalse(warning)
+
+    def test_fiscal_position_rate_change_refused(self):
+        tax_p0_s = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p0_S')
+        tax_p0_s.original_tax_ids = [Command.link(self.tax_p24_s.id)]
+        fpos = self.env['account.fiscal.position'].create({
+            'name': 'Exempt', 'company_id': self.company.id,
+            'tax_ids': [Command.link(tax_p0_s.id)],
+        })
+        tax, warning = self.company._l10n_gr_edi_resolve_vat_tax(24.0, '2.1', fpos)
+        self.assertFalse(tax)
+        self.assertTrue(warning)
+
+
 class TestMyDataFetchBillVals(TestMyDataFetchCommon):
 
     @classmethod
@@ -600,6 +656,47 @@ class TestMyDataFetchBillVals(TestMyDataFetchCommon):
         vals, _report = self.company._l10n_gr_edi_prepare_bill_vals(
             self._inv(series='0'), self.partner)
         self.assertEqual(vals['ref'], '101')
+
+    def test_fiscal_position_applied_from_partner(self):
+        tax_p24_s = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p24_S')
+        tax_p24_s_eu = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p24_S_eu')
+        tax_p24_s_eu.original_tax_ids = [Command.link(tax_p24_s.id)]
+        fpos = self.env['account.fiscal.position'].create({
+            'name': 'Vendor override', 'company_id': self.company.id,
+            'tax_ids': [Command.link(tax_p24_s_eu.id)],
+        })
+        self.partner.with_company(self.company).property_account_position_id = fpos
+        try:
+            vals, report = self.company._l10n_gr_edi_prepare_bill_vals(
+                self._inv(), self.partner)
+            self.assertEqual(vals['fiscal_position_id'], fpos.id)
+            line_vals = [cmd[2] for cmd in vals['invoice_line_ids']]
+            self.assertEqual(line_vals[0]['tax_ids'],
+                             [Command.set([tax_p24_s_eu.id])])
+            self.assertFalse(report['warnings'])
+        finally:
+            self.partner.with_company(self.company).property_account_position_id = False
+
+    def test_fiscal_position_rate_change_falls_back(self):
+        tax_p24_s = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p24_S')
+        tax_p0_s = self.env.ref(f'account.{self.company.id}_l10n_gr_tax_p0_S')
+        tax_p0_s.original_tax_ids = [Command.link(tax_p24_s.id)]
+        fpos = self.env['account.fiscal.position'].create({
+            'name': 'Exempt vendor', 'company_id': self.company.id,
+            'tax_ids': [Command.link(tax_p0_s.id)],
+        })
+        self.partner.with_company(self.company).property_account_position_id = fpos
+        try:
+            vals, report = self.company._l10n_gr_edi_prepare_bill_vals(
+                self._inv(), self.partner)
+            line_vals = [cmd[2] for cmd in vals['invoice_line_ids']]
+            adjustments = [v for v in line_vals
+                           if v.get('l10n_gr_edi_is_fetch_adjustment')]
+            self.assertEqual(len(adjustments), 1)
+            self.assertEqual(adjustments[0]['price_unit'], 240.0)
+            self.assertTrue(any('Fiscal position' in w for w in report['warnings']))
+        finally:
+            self.partner.with_company(self.company).property_account_position_id = False
 
     def test_credit_invoice_becomes_refund_and_links_original(self):
         original = self.env['account.move'].create({
@@ -758,14 +855,6 @@ class TestMyDataFetchNote(TestMyDataFetchCommon):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        tax = cls._find_or_create_purchase_tax(24.0)
-        cls.env['account.tax'].search([
-            ('company_id', '=', cls.company.id),
-            ('type_tax_use', '=', 'purchase'),
-            ('amount_type', '=', 'percent'),
-            ('amount', '=', 24.0),
-            ('id', '!=', tax.id),
-        ]).active = False
         cls.partner = cls.env['res.partner'].create({
             'name': 'Vendor X', 'vat': 'EL123456789', 'is_company': True,
         })
@@ -1000,11 +1089,6 @@ class _FakeResponse:
 
 class TestMyDataFetchFlow(TestMyDataFetchCommon):
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls._find_or_create_purchase_tax(24.0)
-
     def _run_cron_with_pages(self, pages):
         """Run the cron with mocked HTTP GETs returning the given XML bodies."""
         responses = [_FakeResponse(p) for p in pages]
@@ -1085,6 +1169,17 @@ class TestMyDataFetchFlow(TestMyDataFetchCommon):
             ('company_id', '=', self.company.id),
         ])
         self.assertEqual(len(bills), 1)
+
+    def test_cron_skips_delivery_note(self):
+        # 9.3 is a logistics document, not a fiscal one: no bill, but the
+        # watermark still advances past it.
+        self._run_cron_with_pages([_requested_doc(_invoice_xml(inv_type='9.3'))])
+        bills = self.env['account.move'].search([
+            ('l10n_gr_edi_is_fetched', '=', True),
+            ('company_id', '=', self.company.id),
+        ])
+        self.assertFalse(bills)
+        self.assertEqual(self.company.l10n_gr_edi_fetch_mark, '400001234567890')
 
     def test_cron_skips_precancelled_invoice(self):
         self._run_cron_with_pages([_requested_doc(_invoice_xml(

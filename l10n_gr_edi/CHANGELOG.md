@@ -14,6 +14,36 @@ official one. It is versioned as *upstream base + local lineage*:
   newer upstream snapshot, listing the re-applied patches). This file — not
   git alone — is the authoritative record of divergence from upstream.
 
+## [1.3] - 2026-08-04 — [local]
+
+Vendor-bill fetch: VAT amounts now land on real purchase taxes instead of
+fallback lines. The previous unique-percent match could never fire on the
+Greek CoA (seven active 24% purchase taxes), so every fetched bill needed
+manual tax work.
+
+### Added
+- `_l10n_gr_edi_resolve_vat_tax()`: resolves the payload VAT rate to the
+  Greek chart-template purchase tax by xml_id
+  (`account.{company}_l10n_gr_tax_p{rate}_{G|S}`). The G/S suffix comes from
+  the myDATA document type (1.x and retail-goods 11.1/11.3 → `G`; 2.x and
+  retail-services 11.2/11.4 → `S`). Types without a goods/services signal
+  (3.x, 5.x, 8.x), rates without a template tax (3%), and archived taxes keep
+  the explicit fallback-line behavior — never guess.
+- Fiscal-position precedence: the created bill carries the partner's fiscal
+  position (`_get_fiscal_position`) and the resolved tax is mapped through it,
+  so per-vendor tax preferences win over the G/S heuristic. A mapping that
+  changes the rate is refused with a chatter warning (the payload totals are
+  the legal record and must reconcile).
+- `NON_FISCAL_INVOICE_TYPES`: delivery notes (type 9.3) are logistics
+  documents and no longer create €0 vendor bills; they are skipped (debug
+  log) while still advancing the watermark. Future: could feed inventory
+  receipts.
+
+### Changed
+- VAT exemption categories are now surfaced in the chatter Warnings section
+  (previously collected but never rendered).
+- Fallback warning reworded: "VAT x% could not be mapped to a purchase tax".
+
 ## [1.2] - 2026-08-03 — [re-port]
 
 Upstream 19.0 snapshot advanced to `8e07e45a2393` (2026-05-27) and selected
