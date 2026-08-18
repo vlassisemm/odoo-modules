@@ -14,6 +14,19 @@ official one. It is versioned as *upstream base + local lineage*:
   newer upstream snapshot, listing the re-applied patches). This file — not
   git alone — is the authoritative record of divergence from upstream.
 
+## [1.4] - 2026-08-18 — [local]
+
+### Added
+- Fetched-bill line labels now carry every descriptive field the issuer can
+  send: `itemDescr` and `lineComments` are both kept (joined with " — " when
+  they differ) and `TaricNo`, `fuelCode` and
+  `otherMeasurementUnitQuantity/Title` are appended in parentheses.
+- When the payload has no description at all — the normal case, since
+  myDATA only allows `itemDescr` on tax-free / delivery-note invoices — the
+  fallback label now uses the issuer's `incomeClassification`
+  (e.g. "1.3 - Provision of Services Income (E3_561_001) — myDATA line 1")
+  before degrading to the bare "myDATA line N".
+
 ## [1.3.2] - 2026-08-04 — [local]
 
 ### Fixed

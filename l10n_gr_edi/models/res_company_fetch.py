@@ -10,6 +10,7 @@ from markupsafe import Markup, escape
 from odoo import _, api, fields, models, Command
 from odoo.tools import float_compare
 from odoo.addons.l10n_gr_edi.models.preferred_classification import (
+    CLASSIFICATION_CATEGORY_SELECTION,
     INVOICE_TYPES_HAVE_EXPENSE,
     INVOICE_TYPES_SELECTION,
     TAX_EXEMPTION_CATEGORY_SELECTION,
@@ -126,7 +127,19 @@ class ResCompany(models.Model):
                 'vat_exemption_category': _el_int(det, '{*}vatExemptionCategory'),
                 'item_descr': _el_text(det, '{*}itemDescr'),
                 'item_code': _el_text(det, '{*}itemCode'),
+                'taric_no': _el_text(det, '{*}TaricNo'),
+                'fuel_code': _el_text(det, '{*}fuelCode'),
                 'line_comments': _el_text(det, '{*}lineComments'),
+                'other_uom_quantity': _el_float(det, '{*}otherMeasurementUnitQuantity'),
+                'other_uom_title': _el_text(det, '{*}otherMeasurementUnitTitle'),
+                'income_classifications': [
+                    {
+                        'category': _el_text(cls, '{*}classificationCategory'),
+                        'type': _el_text(cls, '{*}classificationType'),
+                        'amount': _el_float(cls, '{*}amount'),
+                    }
+                    for cls in det.iterfind('{*}incomeClassification')
+                ],
                 'withheld_amount': _el_float(det, '{*}withheldAmount'),
                 'withheld_percent_category': _el_int(det, '{*}withheldPercentCategory'),
                 'fees_amount': _el_float(det, '{*}feesAmount'),
@@ -404,6 +417,63 @@ class ResCompany(models.Model):
                     fpos=fiscal_position.name, tax=tax.name)
         return tax, None
 
+    @api.model
+    def _l10n_gr_edi_line_description(self, line):
+        """Fold every descriptive field the issuer sent into the line label.
+        myDATA only allows ``itemDescr`` on tax-free / delivery-note invoices and
+        ``lineComments`` is optional, so ordinary bills usually carry neither —
+        the issuer's income classification is then the most telling label left."""
+        item_descr = line.get('item_descr')
+        comments = line.get('line_comments')
+        parts = [item_descr]
+        if comments and comments != item_descr:
+            parts.append(comments)
+        descr = ' — '.join(part for part in parts if part)
+        if not descr:
+            if line.get('rec_type') == 2:
+                descr = _('Fees')
+            elif line.get('rec_type') == 3:
+                descr = _('Other taxes')
+            else:
+                cls_labels = self._l10n_gr_edi_classification_labels(
+                    line.get('income_classifications') or [])
+                if cls_labels:
+                    descr = _('%(cls)s — myDATA line %(n)s',
+                              cls=', '.join(cls_labels), n=line['line_number'])
+                else:
+                    descr = _('myDATA line %s', line['line_number'])
+        if line.get('item_code'):
+            descr = f"[{line['item_code']}] {descr}"
+        extras = []
+        if line.get('taric_no'):
+            extras.append(_('TARIC %s', line['taric_no']))
+        if line.get('fuel_code'):
+            extras.append(_('fuel code %s', line['fuel_code']))
+        if line.get('other_uom_title'):
+            other_qty = line.get('other_uom_quantity')
+            extras.append(f"{other_qty:g} {line['other_uom_title']}"
+                          if other_qty else line['other_uom_title'])
+        if extras:
+            descr = f"{descr} ({'; '.join(extras)})"
+        return descr
+
+    @api.model
+    def _l10n_gr_edi_classification_labels(self, classifications):
+        """Distinct human labels for the issuer's income classifications, e.g.
+        ``1.3 - Provision of Services Income (E3_561_001)``."""
+        category_labels = dict(CLASSIFICATION_CATEGORY_SELECTION)
+        labels = []
+        for cls in classifications:
+            category, cls_type = cls.get('category'), cls.get('type')
+            if not category and not cls_type:
+                continue
+            label = category_labels.get(category, category) or ''
+            if cls_type:
+                label = f'{label} ({cls_type})' if label else cls_type
+            if label not in labels:
+                labels.append(label)
+        return labels
+
     def _l10n_gr_edi_prepare_line_vals(self, inv, fiscal_position=None):
         """Map payload lines to account.move.line create-commands.
         Invariant: every payload amount lands in a matched tax or an explicit
@@ -415,16 +485,7 @@ class ResCompany(models.Model):
         for line in inv['lines']:
             number = line['line_number']
             sign = -1.0 if line['rec_type'] == 7 else 1.0
-            descr = line['item_descr'] or line['line_comments']
-            if not descr:
-                if line['rec_type'] == 2:
-                    descr = _('Fees')
-                elif line['rec_type'] == 3:
-                    descr = _('Other taxes')
-                else:
-                    descr = _('myDATA line %s', number)
-            if line['item_code']:
-                descr = f"[{line['item_code']}] {descr}"
+            descr = self._l10n_gr_edi_line_description(line)
 
             quantity = line['quantity'] or 1.0
             net_value = line['net_value']

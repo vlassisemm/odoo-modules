@@ -21,7 +21,8 @@ def _requested_doc(body):
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<RequestedDoc xmlns="http://www.aade.gr/myDATA/invoice/v1.0" '
-        'xmlns:inv="http://www.aade.gr/myDATA/invoice/v1.0">'
+        'xmlns:inv="http://www.aade.gr/myDATA/invoice/v1.0" '
+        'xmlns:icls="https://www.aade.gr/myDATA/incomeClassificaton/v1.0">'
         f'{body}</RequestedDoc>'
     ).encode('utf-8')
 
@@ -93,8 +94,14 @@ FULL_LINE_XML = (
     '<inv:stampDutyAmount>12.00</inv:stampDutyAmount>'
     '<inv:stampDutyPercentCategory>1</inv:stampDutyPercentCategory>'
     '<inv:lineComments>Consulting July</inv:lineComments>'
+    '<inv:incomeClassification><icls:classificationType>E3_561_001</icls:classificationType>'
+    '<icls:classificationCategory>category1_3</icls:classificationCategory>'
+    '<icls:amount>1000.00</icls:amount></inv:incomeClassification>'
     '<inv:itemDescr>Consulting services</inv:itemDescr>'
+    '<inv:TaricNo>85171200</inv:TaricNo>'
     '<inv:itemCode>SRV-01</inv:itemCode>'
+    '<inv:otherMeasurementUnitQuantity>4</inv:otherMeasurementUnitQuantity>'
+    '<inv:otherMeasurementUnitTitle>boxes</inv:otherMeasurementUnitTitle>'
     '</inv:invoiceDetails>'
 )
 
@@ -162,6 +169,12 @@ class TestMyDataFetchParse(TestMyDataFetchCommon):
         self.assertEqual(line['item_descr'], 'Consulting services')
         self.assertEqual(line['line_comments'], 'Consulting July')
         self.assertEqual(line['item_code'], 'SRV-01')
+        self.assertEqual(line['taric_no'], '85171200')
+        self.assertIsNone(line['fuel_code'])
+        self.assertEqual(line['other_uom_quantity'], 4.0)
+        self.assertEqual(line['other_uom_title'], 'boxes')
+        self.assertEqual(line['income_classifications'], [
+            {'category': 'category1_3', 'type': 'E3_561_001', 'amount': 1000.0}])
         self.assertEqual(line['withheld_amount'], 200.0)
         self.assertEqual(line['withheld_percent_category'], 3)
         self.assertEqual(line['stamp_duty_amount'], 12.0)
@@ -391,6 +404,9 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
             'line_number': 1, 'rec_type': None, 'quantity': None, 'net_value': 1000.0,
             'vat_category': 1, 'vat_amount': 240.0, 'vat_exemption_category': None,
             'item_descr': None, 'item_code': None, 'line_comments': None,
+            'taric_no': None, 'fuel_code': None,
+            'other_uom_quantity': None, 'other_uom_title': None,
+            'income_classifications': [],
             'withheld_amount': None, 'withheld_percent_category': None,
             'fees_amount': None, 'fees_percent_category': None,
             'stamp_duty_amount': None, 'stamp_duty_percent_category': None,
@@ -417,6 +433,30 @@ class TestMyDataFetchLines(TestMyDataFetchCommon):
         self.assertEqual(names[0], '[W-1] Widget')
         self.assertEqual(names[1], 'Comment only')
         self.assertIn('3', names[2])  # generic "myDATA line 3" fallback
+
+    def test_description_uses_every_issuer_field(self):
+        commands, _report = self.company._l10n_gr_edi_prepare_line_vals(self._inv([
+            self._line(item_descr='Widget', line_comments='Blue ones', item_code='W-1',
+                       taric_no='85171200', fuel_code='10',
+                       other_uom_quantity=4.0, other_uom_title='boxes'),
+            self._line(line_number=2, item_descr='Same', line_comments='Same'),
+            self._line(line_number=3, income_classifications=[
+                {'category': 'category1_3', 'type': 'E3_561_001', 'amount': 600.0},
+                {'category': 'category1_3', 'type': 'E3_561_001', 'amount': 400.0},
+            ]),
+            self._line(line_number=4, income_classifications=[
+                {'category': 'category1_1', 'type': None, 'amount': 500.0},
+                {'category': None, 'type': 'E3_561_007', 'amount': 500.0},
+            ]),
+        ]))
+        names = [vals['name'] for vals in self._created_vals(commands)]
+        self.assertEqual(
+            names[0], '[W-1] Widget — Blue ones (TARIC 85171200; fuel code 10; 4 boxes)')
+        self.assertEqual(names[1], 'Same')  # identical comment is not repeated
+        self.assertEqual(
+            names[2], '1.3 - Provision of Services Income (E3_561_001) — myDATA line 3')
+        self.assertEqual(
+            names[3], '1.1 - Commodity Sale Income, E3_561_007 — myDATA line 4')
 
     def test_vat_tax_matched(self):
         commands, report = self.company._l10n_gr_edi_prepare_line_vals(self._inv())
