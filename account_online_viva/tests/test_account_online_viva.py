@@ -839,3 +839,96 @@ class TestVivaCronCredentials(VivaCommon):
         self.account.invalidate_recordset()
         self.assertTrue(self.account.last_error)
         self.assertIn('credentials', self.account.last_error.lower())
+
+
+class TestVivaTransactionSemantics(VivaCommon):
+    """Live-data findings (2026-09-04): balance holds and readable labels."""
+
+    def setUp(self):
+        super().setUp()
+        self.company.viva_client_id = 'cid'
+        self.company.sudo().viva_client_secret = 'sec'
+        self.journal.currency_id = self.env.ref('base.EUR')
+        self.account.sync_start_date = date(2026, 1, 1)
+
+    def _patch_client(self, txns):
+        client = MagicMock()
+        client.search_transactions.return_value = txns
+        return patch.object(type(self.account), '_viva_get_client', return_value=client)
+
+    def test_available_balance_holds_are_not_imported(self):
+        txns = [
+            {'accountTransactionId': 'P1', 'typeId': 20, 'subTypeId': 100,
+             'amount': -90.0, 'created': '2026-03-01T10:00:00+03:00',
+             'counterPart': 'ANTHROPIC* CLAUDE SUB', 'currencyCode': 978},
+            {'accountTransactionId': 'R1', 'typeId': 32, 'subTypeId': 101,
+             'amount': -90.0, 'created': '2026-03-01T10:00:00+03:00',
+             'counterPart': 'ANTHROPIC* CLAUDE SUB', 'currencyCode': 978},
+            {'accountTransactionId': 'U1', 'typeId': 32, 'subTypeId': 103,
+             'amount': 90.0, 'created': '2026-03-01T10:00:00+03:00',
+             'counterPart': 'ANTHROPIC* CLAUDE SUB', 'currencyCode': 978},
+        ]
+        with self._patch_client(txns):
+            lines = self.account._viva_sync_one(
+                date_from=date(2026, 1, 1), date_to=date(2026, 3, 31))
+        self.assertEqual(lines.mapped('viva_transaction_id'), ['P1'])
+        note = self.env['mail.message'].search([
+            ('model', '=', 'viva.account'), ('res_id', '=', self.account.id)],
+            order='id desc', limit=1)
+        self.assertIn('2 balance holds ignored', note.body)
+
+    def test_missing_type_id_is_imported(self):
+        txns = [{'accountTransactionId': 'N1', 'amount': 1.0,
+                 'valueDate': '2026-03-01', 'currencyCode': 978}]
+        with self._patch_client(txns):
+            lines = self.account._viva_sync_one(
+                date_from=date(2026, 1, 1), date_to=date(2026, 3, 31))
+        self.assertEqual(len(lines), 1)
+
+    def test_labels_use_subtype_names(self):
+        fee = self.account._viva_map_transaction(
+            {'accountTransactionId': 'F', 'typeId': 20, 'subTypeId': 13,
+             'amount': -2.5, 'created': '2026-03-01T10:00:00+03:00'})
+        self.assertEqual(fee['payment_ref'], 'Card commission')
+        clearance = self.account._viva_map_transaction(
+            {'accountTransactionId': 'C', 'typeId': 20, 'subTypeId': 83,
+             'amount': 100.0, 'created': '2026-03-01T10:00:00+03:00'})
+        self.assertEqual(clearance['payment_ref'], 'Card payments clearance')
+        purchase = self.account._viva_map_transaction(
+            {'accountTransactionId': 'P', 'typeId': 20, 'subTypeId': 100,
+             'amount': -90.0, 'created': '2026-03-01T10:00:00+03:00',
+             'counterPart': 'ANTHROPIC* CLAUDE SUB'})
+        self.assertEqual(purchase['payment_ref'], 'ANTHROPIC* CLAUDE SUB (Card purchase)')
+        self.assertEqual(purchase['partner_name'], 'ANTHROPIC* CLAUDE SUB')
+        unknown = self.account._viva_map_transaction(
+            {'accountTransactionId': 'X', 'typeId': 20, 'subTypeId': 999,
+             'amount': 1.0, 'created': '2026-03-01T10:00:00+03:00'})
+        self.assertEqual(unknown['payment_ref'], 'Viva 20/999')
+
+    def test_all_skipped_for_currency_holds_watermark_and_flags_error(self):
+        self.journal.currency_id = self.env.ref('base.USD')
+        txns = [{'accountTransactionId': 'E%s' % i, 'typeId': 20, 'subTypeId': 83,
+                 'amount': 10.0, 'valueDate': '2026-03-01', 'currencyCode': 978}
+                for i in range(3)]
+        with self._patch_client(txns):
+            lines = self.account._viva_sync_one(
+                date_from=date(2026, 1, 1), date_to=date(2026, 3, 31))
+        self.assertFalse(lines)
+        self.assertFalse(self.account.last_successful_to)
+        self.assertIn('3 transaction(s) skipped', self.account.last_error)
+        self.assertIn('EUR', self.account.last_error)
+        self.assertIn('USD', self.account.last_error)
+
+    def test_partial_currency_skip_still_advances_watermark(self):
+        txns = [
+            {'accountTransactionId': 'OK', 'typeId': 20, 'subTypeId': 83,
+             'amount': 10.0, 'valueDate': '2026-03-01', 'currencyCode': 978},
+            {'accountTransactionId': 'USD', 'typeId': 20, 'subTypeId': 83,
+             'amount': 10.0, 'valueDate': '2026-03-01', 'currencyCode': 840},
+        ]
+        with self._patch_client(txns):
+            lines = self.account._viva_sync_one(
+                date_from=date(2026, 1, 1), date_to=date(2026, 3, 31))
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(self.account.last_successful_to, date(2026, 3, 31))
+        self.assertFalse(self.account.last_error)

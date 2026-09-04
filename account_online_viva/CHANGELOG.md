@@ -6,6 +6,35 @@ portion of the Odoo manifest version (`19.0.{major}.{minor}.{patch}`).
 Importance: **patch** = fixes without data impact, **minor** = backward-compatible
 features/fields, **major** = breaking changes requiring migration scripts.
 
+## [1.2.0] - 2026-09-04
+
+Findings from the first live import against production data.
+
+### Fixed
+- **Available-balance holds were imported as transactions.** Viva `typeId`
+  32 entries (card-purchase reserve/unreserve, sale-transaction reserve,
+  obligation holds) only move the *available* balance and always net to
+  zero; they appeared as paired +/- phantom lines in Bank Matching. Only
+  balance movements (`typeId` 20/21) are imported now; ignored holds are
+  counted in the chatter note. `typeId` 21 (overdraft) is kept on the
+  docs' word only — none seen in data. If a journal was already synced on
+  an earlier version, delete the phantom lines (statement lines whose
+  `transaction_details->>'typeId' = '32'`, all unreconciled ±pairs) and
+  run *Reset Sync*; real lines are deduplicated by transaction id.
+- **Watermark advanced after an all-skipped run.** A fetch whose
+  transactions were all skipped for currency mismatch (journal currency not
+  set, or wrong) still advanced *Fetched Until*, so the next incremental run
+  silently lost everything before the 7-day overlap. Such a run now keeps
+  the watermark and flags the account with an explicit error naming both
+  currencies.
+
+### Changed
+- Readable statement labels: Viva `subTypeId` is mapped to a name
+  ("Card commission", "Card payments clearance", "Pricing cashback",
+  "Transfer to IBAN", …) and appended to the counterparty when present
+  ("CLOUDFLARE (Card purchase)"); `userDescription` is used as label text
+  too. The bare "Viva 20/13" form only remains for unknown subtypes.
+
 ## [1.1.0] - 2026-09-04
 
 ### Added

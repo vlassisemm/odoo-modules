@@ -6,14 +6,22 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Odoo Server 19.0+e\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-04 00:57+0000\n"
-"PO-Revision-Date: 2026-09-04 00:57+0000\n"
+"POT-Creation-Date: 2026-09-04 01:16+0000\n"
+"PO-Revision-Date: 2026-09-04 01:16+0000\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: \n"
 "Plural-Forms: \n"
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid ""
+"%(n)s transaction(s) skipped: their currency (%(wallet)s) does not match the"
+" journal currency (%(journal)s). Fix the journal currency, then fetch again."
+msgstr ""
 
 #. module: account_online_viva
 #: model_terms:ir.ui.view,arch_db:account_online_viva.account_journal_dashboard_kanban_viva
@@ -236,6 +244,12 @@ msgstr ""
 #: model:ir.model.fields,field_description:account_online_viva.field_viva_fetch_wizard__display_name
 #: model:ir.model.fields,field_description:account_online_viva.field_viva_setup_wizard__display_name
 msgid "Display Name"
+msgstr ""
+
+#. module: account_online_viva
+#: model:ir.model.fields,field_description:account_online_viva.field_account_journal__viva_sync_start_date
+#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__sync_start_date
+msgid "Earliest Import Date"
 msgstr ""
 
 #. module: account_online_viva
@@ -522,12 +536,6 @@ msgid "Sync Error"
 msgstr ""
 
 #. module: account_online_viva
-#: model:ir.model.fields,field_description:account_online_viva.field_account_journal__viva_sync_start_date
-#: model:ir.model.fields,field_description:account_online_viva.field_viva_account__sync_start_date
-msgid "Sync Start Date"
-msgstr ""
-
-#. module: account_online_viva
 #: model_terms:ir.ui.view,arch_db:account_online_viva.viva_account_view_form
 msgid "Synchronization"
 msgstr ""
@@ -675,7 +683,7 @@ msgstr ""
 #: code:addons/account_online_viva/models/viva_account.py:0
 msgid ""
 "Viva sync: imported %(n)s transaction(s) (%(f)s → %(t)s; %(sc)s skipped for "
-"currency, %(sl)s skipped for lock date)."
+"currency, %(sl)s skipped for lock date, %(sh)s balance holds ignored)."
 msgstr ""
 
 #. module: account_online_viva

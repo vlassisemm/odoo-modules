@@ -19,8 +19,14 @@ credentials — no third-party aggregator and no Odoo online-sync proxy.
   and auto-creates a bank journal + Viva Account for each one
 - **Idempotent** — transactions are de-duplicated by Viva transaction id, so
   re-runs and overlapping windows never create duplicates
-- Skips transactions whose currency differs from the journal currency, and
-  transactions dated on or before an accounting lock date
+- Imports only real balance movements (Viva `typeId` 20/21); available-balance
+  holds such as card-authorisation reserves (`typeId` 32) are ignored
+- Readable labels from Viva's transaction sub-types ("Card commission",
+  "Card payments clearance", "CLOUDFLARE (Card purchase)", …)
+- Skips transactions whose currency differs from the journal currency (a run
+  where *everything* is skipped is flagged as an error and does not advance
+  the incremental cursor), and transactions dated on or before an accounting
+  lock date
 - **Multi-company** with per-company API credentials
 - **Edition-agnostic** — works on Odoo Community and Enterprise (built on the
   base `account` module, not on Enterprise online synchronization)
