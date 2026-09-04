@@ -1,6 +1,7 @@
 # Copyright 2026 Vlassis Emmanouil
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
 import logging
+import re
 
 from dateutil.relativedelta import relativedelta
 from psycopg2 import errors as pg_errors
@@ -8,7 +9,7 @@ from psycopg2 import errors as pg_errors
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, UserError
 
-from .viva_client import pick
+from .viva_client import VivaApiError, pick
 
 _logger = logging.getLogger(__name__)
 BATCH = 100
@@ -20,6 +21,25 @@ OVERLAP_DAYS = 7
 # settlements and obligations). Only balance movements are bank
 # transactions; holds always net to zero and must not become statement lines.
 BALANCE_TYPE_IDS = {20, 21}
+
+# Sub-types enriched from the other Data Services feeds (verified live
+# 2026-09-04): every sale produces one clearance line (gross, same day and
+# amount) and one commission line (= totalCommission); card purchases join
+# the card-expenses feed on walletTransactionId == accountTransactionId.
+CLEARANCE_SUBTYPES = {83}
+COMMISSION_SUBTYPES = {13}
+CARD_SUBTYPES = {100, 104, 108, 112, 116}
+# Only these sale fields are persisted: the feed also carries customer
+# e-mail and phone, which must never land in Odoo or in logs.
+SALE_KEEP = ('transactionId', 'orderCode', 'merchantTrns', 'fullName', 'amount',
+             'totalCommission', 'statusId', 'transactionTypeId', 'insDate',
+             'clearanceDate', 'sourceCode', 'bankId')
+CARD_KEEP = ('walletTransactionId', 'maskedNumber', 'mcc', 'mccGroupName',
+             'description', 'authorizationDate', 'clearanceDate', 'cardHolder')
+OPENING_BALANCE_ID = 'opening-balance'
+OPENING_BALANCE_LOOKBACK_DAYS = 14
+# MT940 balance tags: :60F: opening, :62F: closing — "C260902EUR307,43".
+MT940_CLOSING_RE = re.compile(r':62F:([CD])(\d{6})([A-Z]{3})([\d.,]+)')
 
 # subTypeId -> human label (Viva "Account transaction created" webhook docs).
 SUBTYPE_LABELS = {
@@ -170,6 +190,10 @@ class VivaAccount(models.Model):
         else:
             label = _('Viva transaction')
         currency = self.journal_id.currency_id or self.company_id.currency_id
+        try:
+            subtype_key = int(subtype_id) if subtype_id is not None else None
+        except (TypeError, ValueError):
+            subtype_key = None
         return {
             'viva_transaction_id': txn_id and str(txn_id),
             'amount': currency.round(float(amount)),
@@ -177,8 +201,172 @@ class VivaAccount(models.Model):
             'payment_ref': label,
             'partner_name': counterpart or False,
             'currency_code': pick(raw, 'currencyCode', 'CurrencyCode'),
+            'subtype_id': subtype_key,
             'transaction_details': raw,
         }
+
+    # ---- enrichment from the sales and card-expenses feeds -------------
+
+    @staticmethod
+    def _viva_date_of(value):
+        value = str(value or '')[:10]
+        return fields.Date.to_date(value) if value else False
+
+    @staticmethod
+    def _viva_sale_reference(sale, by_id=None):
+        """Shop order reference of a sale; a refund (transactionTypeId 4)
+        usually carries none, so fall back to its parent sale's."""
+        ref = (pick(sale, 'merchantTrns', 'MerchantTrns') or '').strip()
+        parent = (by_id or {}).get(pick(sale, 'parentId', 'ParentId'))
+        is_refund = pick(sale, 'transactionTypeId', 'TransactionTypeId') == 4
+        if parent and (not ref or is_refund):
+            parent_ref = (pick(parent, 'merchantTrns', 'MerchantTrns') or '').strip()
+            if parent_ref:
+                return _('%s (refund)', parent_ref) if is_refund else parent_ref
+        if ref:
+            return ref
+        order = pick(sale, 'orderCode', 'OrderCode')
+        return _('order %s', order) if order else ''
+
+    def _viva_enrich_sales(self, mapped, sales):
+        """Label clearance/commission lines with the matching sale's order
+        reference and customer. Matching key: same day (±1 day tolerance)
+        and same amount; each sale is used at most once per role."""
+        by_clear, by_fee = {}, {}
+        by_id = {str(pick(s, 'transactionId', 'TransactionId')): s for s in sales
+                 if pick(s, 'transactionId', 'TransactionId')}
+        for sale in sales:
+            day = self._viva_date_of(pick(sale, 'insDate', 'InsDate'))
+            if not day:
+                continue
+            amount = float(pick(sale, 'amount', 'Amount', default=0.0) or 0.0)
+            fee = float(pick(sale, 'totalCommission', 'TotalCommission', default=0.0) or 0.0)
+            by_clear.setdefault((day, round(amount, 2)), []).append(sale)
+            if fee:
+                by_fee.setdefault((day, round(-abs(fee), 2)), []).append(sale)
+
+        def take(index, day, amount):
+            for offset in (0, 1, -1):
+                key = (day + relativedelta(days=offset), round(amount, 2))
+                if index.get(key):
+                    return index[key].pop(0)
+            return None
+
+        for m in mapped:
+            subtype = m.get('subtype_id')
+            if subtype in CLEARANCE_SUBTYPES:
+                sale = take(by_clear, m['date'], m['amount'])
+                kind = _('Card refund clearance') if m['amount'] < 0 else _('Card payments clearance')
+            elif subtype in COMMISSION_SUBTYPES:
+                sale = take(by_fee, m['date'], m['amount'])
+                kind = _('Card commission')
+            else:
+                continue
+            if not sale:
+                continue
+            ref = self._viva_sale_reference(sale, by_id)
+            customer = (pick(sale, 'fullName', 'FullName') or '').strip()
+            parts = [p for p in (ref, customer) if p]
+            m['payment_ref'] = '%s: %s' % (kind, ', '.join(parts)) if parts else kind
+            if customer:
+                m['partner_name'] = customer
+            m['transaction_details'] = dict(
+                m['transaction_details'],
+                viva_sale={k: sale.get(k) for k in SALE_KEEP if k in sale})
+
+    def _viva_enrich_cards(self, mapped, expenses):
+        """Add merchant location, card and MCC to card lines."""
+        index = {}
+        for exp in expenses:
+            txn_id = pick(exp, 'walletTransactionId', 'WalletTransactionId')
+            if txn_id:
+                index[str(txn_id)] = exp
+        for m in mapped:
+            exp = index.get(m['viva_transaction_id'])
+            if not exp:
+                continue
+            desc = (pick(exp, 'description', 'Description') or '').replace('\\\\', '\\')
+            segments = [seg.strip() for seg in desc.split('\\') if seg.strip()]
+            merchant = segments[0] if segments else ''
+            city = segments[-2] if len(segments) >= 3 else ''
+            # last segment is "ZIP COUNTRY"; the country is a 3-letter code,
+            # occasionally doubled ("GRCGRC") in Viva's data.
+            country = segments[-1].split()[-1][-3:] if len(segments) >= 2 and segments[-1].split() else ''
+            masked = pick(exp, 'maskedNumber', 'MaskedNumber') or ''
+            kind = self._viva_subtype_label(m.get('subtype_id')) or _('Card purchase')
+            where = ' '.join(p for p in (city, country) if p)
+            head = ', '.join(p for p in (merchant, where) if p) or m['payment_ref']
+            tail = kind + (' \u2022\u2022%s' % masked[-4:] if masked else '')
+            m['payment_ref'] = '%s (%s)' % (head, tail)
+            if merchant:
+                m['partner_name'] = merchant
+            m['transaction_details'] = dict(
+                m['transaction_details'],
+                viva_card={k: exp.get(k) for k in CARD_KEEP if k in exp})
+
+    def _viva_enrich(self, client, mapped, date_from, date_to):
+        """Best effort: an enrichment feed failing must not fail the sync."""
+        subtypes = {m.get('subtype_id') for m in mapped}
+        if subtypes & (CLEARANCE_SUBTYPES | COMMISSION_SUBTYPES):
+            try:
+                self._viva_enrich_sales(mapped, client.search_sales(date_from, date_to) or [])
+            except VivaApiError as exc:
+                _logger.warning('Viva %s: sales enrichment skipped: %s', self.id, exc)
+        if subtypes & CARD_SUBTYPES:
+            try:
+                self._viva_enrich_cards(mapped, client.merchant_expenses(date_from, date_to) or [])
+            except VivaApiError as exc:
+                _logger.warning('Viva %s: card enrichment skipped: %s', self.id, exc)
+
+    # ---- opening balance from MT940 ---------------------------------------
+
+    def _viva_opening_balance(self, client, date_from, journal_currency, lock_date=None):
+        """On the very first sync of an empty journal, book Viva's closing
+        balance of the day before the window as an opening line — what
+        Odoo's own online sync does with 'Opening statement'."""
+        self.ensure_one()
+        BSL = self.env['account.bank.statement.line']
+        if self.last_successful_to or BSL.search_count(
+                [('journal_id', '=', self.journal_id.id)], limit=1):
+            return BSL
+        day = date_from
+        for _i in range(OPENING_BALANCE_LOOKBACK_DAYS):
+            day = day - relativedelta(days=1)
+            try:
+                text = client.mt940(day)
+            except VivaApiError as exc:
+                _logger.warning('Viva %s: opening balance skipped: %s', self.id, exc)
+                return BSL
+            if not isinstance(text, str):
+                continue
+            match = MT940_CLOSING_RE.search(text)
+            if not match:
+                continue
+            sign, _ymd, code, raw = match.groups()
+            if code != journal_currency.name:
+                _logger.warning('Viva %s: MT940 balance in %s, journal in %s; '
+                                'opening balance skipped.', self.id, code,
+                                journal_currency.name)
+                return BSL
+            amount = float(raw.replace('.', '').replace(',', '.'))
+            if sign == 'D':
+                amount = -amount
+            if lock_date and day <= lock_date:
+                _logger.warning('Viva %s: opening balance date %s is on or before '
+                                'the lock date %s; skipped.', self.id, day, lock_date)
+                return BSL
+            line = self._viva_create_lines([{
+                'viva_transaction_id': OPENING_BALANCE_ID,
+                'amount': journal_currency.round(amount),
+                'date': day,
+                'payment_ref': _('Opening statement: first synchronization'),
+                'partner_name': False,
+                'transaction_details': {'source': 'mt940', 'report_date': str(day)},
+            }])
+            _logger.info('Viva %s: opening balance %s %s booked on %s.',
+                         self.id, amount, code, day)
+            return line
+        return BSL
 
     def _viva_filter_new(self, mapped):
         self.ensure_one()
@@ -294,6 +482,11 @@ class VivaAccount(models.Model):
             kept.append(m)
 
         new = self._viva_filter_new(kept)
+        if new:
+            self._viva_enrich(client, new, date_from, date_to)
+        # Independent of ``kept``: an empty first window must not forfeit the
+        # opening balance forever (the watermark would then always be set).
+        opening = self._viva_opening_balance(client, date_from, journal_currency, lock_date)
         created = self._viva_create_lines(new)
 
         # Every transaction skipped for currency and nothing kept means the
@@ -314,14 +507,16 @@ class VivaAccount(models.Model):
         elif update_watermark:
             state_vals['last_successful_to'] = date_to
         self.sudo().write(state_vals)
-        if created or skipped_currency or skipped_lock_date:
-            self.sudo().message_post(
-                body=_('Viva sync: imported %(n)s transaction(s) '
-                       '(%(f)s → %(t)s; %(sc)s skipped for currency, '
-                       '%(sl)s skipped for lock date, %(sh)s balance holds ignored).',
-                       n=len(created), f=date_from, t=date_to,
-                       sc=skipped_currency, sl=skipped_lock_date, sh=skipped_hold),
-                subtype_xmlid='mail.mt_note')
+        if created or opening or skipped_currency or skipped_lock_date:
+            body = _('Viva sync: imported %(n)s transaction(s) '
+                     '(%(f)s → %(t)s; %(sc)s skipped for currency, '
+                     '%(sl)s skipped for lock date, %(sh)s balance holds ignored).',
+                     n=len(created), f=date_from, t=date_to,
+                     sc=skipped_currency, sl=skipped_lock_date, sh=skipped_hold)
+            if opening:
+                body += ' ' + _('Opening balance of %(amount)s booked on %(date)s from the Viva MT940 statement.',
+                                amount=opening.amount, date=opening.date)
+            self.sudo().message_post(body=body, subtype_xmlid='mail.mt_note')
         else:
             _logger.info('Viva %s: no transactions in window %s → %s '
                          '(%s balance holds ignored).',

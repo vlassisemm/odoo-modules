@@ -932,3 +932,187 @@ class TestVivaTransactionSemantics(VivaCommon):
         self.assertEqual(len(lines), 1)
         self.assertEqual(self.account.last_successful_to, date(2026, 3, 31))
         self.assertFalse(self.account.last_error)
+
+
+class TestVivaEnrichment(VivaCommon):
+    """Sales / card-expenses enrichment and MT940 opening balance (1.3.0)."""
+
+    def setUp(self):
+        super().setUp()
+        self.company.viva_client_id = 'cid'
+        self.company.sudo().viva_client_secret = 'sec'
+        self.journal.currency_id = self.env.ref('base.EUR')
+        self.account.sync_start_date = date(2026, 8, 1)
+
+    def _client(self, txns, sales=None, expenses=None, mt940=None):
+        client = MagicMock()
+        client.search_transactions.return_value = txns
+        client.search_sales.return_value = sales or []
+        client.merchant_expenses.return_value = expenses or []
+        client.mt940.side_effect = mt940 or (lambda day: None)
+        return client
+
+    def _sync(self, client, **kw):
+        with patch.object(type(self.account), '_viva_get_client', return_value=client):
+            return self.account._viva_sync_one(
+                date_from=date(2026, 8, 1), date_to=date(2026, 9, 4), **kw)
+
+    def test_clearance_and_commission_labelled_with_sale(self):
+        txns = [
+            {'accountTransactionId': 'CL1', 'typeId': 20, 'subTypeId': 83, 'amount': 100.0,
+             'created': '2026-09-03T18:00:00+03:00', 'currencyCode': 978},
+            {'accountTransactionId': 'FE1', 'typeId': 20, 'subTypeId': 13, 'amount': -2.5,
+             'created': '2026-09-03T18:00:00+03:00', 'currencyCode': 978},
+            {'accountTransactionId': 'RF1', 'typeId': 20, 'subTypeId': 83, 'amount': -40.0,
+             'created': '2026-08-31T10:00:00+03:00', 'currencyCode': 978},
+        ]
+        sales = [
+            {'transactionId': 'S1', 'orderCode': 111, 'merchantTrns': 'Shop order 1042',
+             'fullName': 'JANE CUSTOMER', 'email': 'jane@example.com', 'phone': '123',
+             'amount': 100.0, 'totalCommission': 2.5, 'statusId': 'F',
+             'transactionTypeId': 5, 'insDate': '2026-09-03T19:13:44+03:00'},
+            {'transactionId': 'S2', 'orderCode': 222, 'merchantTrns': None, 'parentId': 'S0',
+             'fullName': 'JOHN REFUNDED', 'amount': -40.0, 'totalCommission': 0.30,
+             'statusId': 'F', 'transactionTypeId': 4, 'insDate': '2026-08-31T09:00:00+03:00'},
+            {'transactionId': 'S0', 'orderCode': 220, 'merchantTrns': 'Shop order 1039',
+             'fullName': 'JOHN REFUNDED', 'amount': 40.0, 'totalCommission': 1.0,
+             'statusId': 'F', 'transactionTypeId': 5, 'insDate': '2026-08-28T09:00:00+03:00'},
+        ]
+        lines = self._sync(self._client(txns, sales=sales))
+        by_id = {l.viva_transaction_id: l for l in lines}
+        self.assertEqual(by_id['CL1'].payment_ref,
+                         'Card payments clearance: Shop order 1042, JANE CUSTOMER')
+        self.assertEqual(by_id['CL1'].partner_name, 'JANE CUSTOMER')
+        self.assertEqual(by_id['FE1'].payment_ref,
+                         'Card commission: Shop order 1042, JANE CUSTOMER')
+        self.assertEqual(by_id['RF1'].payment_ref,
+                         'Card refund clearance: Shop order 1039 (refund), JOHN REFUNDED')
+        details = by_id['CL1'].transaction_details
+        self.assertEqual(details['viva_sale']['merchantTrns'], 'Shop order 1042')
+        self.assertNotIn('email', details['viva_sale'])
+        self.assertNotIn('phone', details['viva_sale'])
+
+    def test_card_purchase_enriched_from_expenses(self):
+        txns = [{'accountTransactionId': 'CP1', 'typeId': 20, 'subTypeId': 100, 'amount': -50.0,
+                 'created': '2026-09-02T12:00:00+03:00', 'counterPart': 'ACME SUPPLIES',
+                 'currencyCode': 978}]
+        expenses = [{'walletTransactionId': 'CP1', 'maskedNumber': '400000XXXXXX1234',
+                     'mcc': 5734, 'description': 'ACME SUPPLIES\\1 EXAMPLE ST\\ATHENS\\10000        GRCGRC',
+                     'authorizationDate': '2026-09-01T12:09:05+03:00',
+                     'clearanceDate': '2026-09-02T16:29:57+00:00', 'cardHolder': ' '}]
+        lines = self._sync(self._client(txns, expenses=expenses))
+        self.assertEqual(lines.payment_ref,
+                         'ACME SUPPLIES, ATHENS GRC (Card purchase ••1234)')
+        self.assertEqual(lines.partner_name, 'ACME SUPPLIES')
+        self.assertEqual(lines.transaction_details['viva_card']['mcc'], 5734)
+
+    def test_enrichment_failure_does_not_block_sync(self):
+        txns = [{'accountTransactionId': 'CL2', 'typeId': 20, 'subTypeId': 83, 'amount': 10.0,
+                 'created': '2026-09-03T18:00:00+03:00', 'currencyCode': 978}]
+        client = self._client(txns)
+        client.search_sales.side_effect = VivaApiError('sales down')
+        with mute_logger('odoo.addons.account_online_viva.models.viva_account'):
+            lines = self._sync(client)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines.payment_ref, 'Card payments clearance')
+
+    def test_opening_balance_from_mt940_on_first_sync(self):
+        txns = [{'accountTransactionId': 'T1', 'typeId': 20, 'subTypeId': 83, 'amount': 10.0,
+                 'created': '2026-08-02T10:00:00+03:00', 'currencyCode': 978}]
+        statements = {date(2026, 7, 31): ':20:260801\n:60F:C260730EUR300,00\n:62F:C260731EUR1234,56\n-}'}
+        client = self._client(txns, mt940=lambda day: statements.get(day))
+        lines = self._sync(client)
+        opening = self.env['account.bank.statement.line'].search([
+            ('journal_id', '=', self.journal.id), ('viva_transaction_id', '=', 'opening-balance')])
+        self.assertEqual(len(opening), 1)
+        self.assertEqual(opening.amount, 1234.56)
+        self.assertEqual(opening.date, date(2026, 7, 31))
+        self.assertEqual(opening.payment_ref, 'Opening statement: first synchronization')
+        self.assertEqual(len(lines), 1)
+        # second run: watermark set, journal has lines -> no second opening line
+        self._sync(client)
+        self.assertEqual(self.env['account.bank.statement.line'].search_count([
+            ('journal_id', '=', self.journal.id), ('viva_transaction_id', '=', 'opening-balance')]), 1)
+
+    def test_opening_balance_booked_even_when_first_window_is_empty(self):
+        statements = {date(2026, 7, 31): ':62F:C260731EUR10,00\n-}'}
+        client = self._client([], mt940=lambda day: statements.get(day))
+        self._sync(client)  # empty window, watermark advances
+        self.assertTrue(self.account.last_successful_to)
+        client.search_transactions.return_value = [
+            {'accountTransactionId': 'T9', 'typeId': 20, 'subTypeId': 83, 'amount': 10.0,
+             'created': '2026-08-02T10:00:00+03:00', 'currencyCode': 978}]
+        self._sync(client)
+        self.assertEqual(self.env['account.bank.statement.line'].search_count([
+            ('journal_id', '=', self.journal.id), ('viva_transaction_id', '=', 'opening-balance')]), 1)
+
+    def test_opening_balance_respects_lock_date(self):
+        txns = [{'accountTransactionId': 'T8', 'typeId': 20, 'subTypeId': 83, 'amount': 10.0,
+                 'created': '2026-08-02T10:00:00+03:00', 'currencyCode': 978}]
+        client = self._client(txns, mt940=lambda day: ':62F:C260731EUR10,00\n-}')
+        with patch.object(type(self.company), '_get_user_fiscal_lock_date',
+                          return_value=date(2026, 7, 31)), \
+                mute_logger('odoo.addons.account_online_viva.models.viva_account'):
+            lines = self._sync(client)
+        self.assertEqual(len(lines), 1)
+        self.assertFalse(self.env['account.bank.statement.line'].search([
+            ('journal_id', '=', self.journal.id), ('viva_transaction_id', '=', 'opening-balance')]))
+
+    def test_opening_balance_skipped_when_journal_has_lines(self):
+        self.env['account.bank.statement.line'].create({
+            'journal_id': self.journal.id, 'date': date(2026, 7, 1),
+            'amount': 5.0, 'payment_ref': 'manual'})
+        txns = [{'accountTransactionId': 'T2', 'typeId': 20, 'subTypeId': 83, 'amount': 10.0,
+                 'created': '2026-08-02T10:00:00+03:00', 'currencyCode': 978}]
+        client = self._client(txns, mt940=lambda day: ':62F:C260731EUR1,00\n-}')
+        self._sync(client)
+        client.mt940.assert_not_called()
+
+    def test_opening_balance_debit_and_currency_guard(self):
+        txns = [{'accountTransactionId': 'T3', 'typeId': 20, 'subTypeId': 83, 'amount': 10.0,
+                 'created': '2026-08-02T10:00:00+03:00', 'currencyCode': 978}]
+        client = self._client(txns, mt940=lambda day: ':62F:D260731USD5,00\n-}')
+        with mute_logger('odoo.addons.account_online_viva.models.viva_account'):
+            self._sync(client)
+        self.assertFalse(self.env['account.bank.statement.line'].search([
+            ('journal_id', '=', self.journal.id), ('viva_transaction_id', '=', 'opening-balance')]))
+
+
+class TestVivaClientFeeds(VivaTransactionCase):
+    @patch(VIVA_PATH)
+    def test_search_sales_pages_and_body(self, req):
+        req.post.side_effect = [
+            _resp({'access_token': 't', 'expires_in': 3600}),
+            _resp([{'transactionId': 'a'}]),
+        ]
+        client = VivaClient('id', 'sec', 'production')
+        rows = client.search_sales(date(2026, 8, 1), date(2026, 9, 4))
+        self.assertEqual(rows, [{'transactionId': 'a'}])
+        call = req.post.call_args_list[1]
+        self.assertIn('/dataservices/v2/transactions/Search', call[0][0])
+        self.assertEqual(call[1]['json'], {'DateFrom': '2026-08-01', 'DateTo': '2026-09-04'})
+        self.assertEqual(call[1]['params']['Page'], 1)
+
+    @patch(VIVA_PATH)
+    def test_merchant_expenses_uses_pagenumber_and_unwraps(self, req):
+        req.post.side_effect = [
+            _resp({'access_token': 't', 'expires_in': 3600}),
+            _resp({'currentPage': 1, 'data': [{'walletTransactionId': 'x'}], 'links': {}}),
+        ]
+        client = VivaClient('id', 'sec', 'production')
+        rows = client.merchant_expenses(date(2026, 8, 1), date(2026, 9, 4))
+        self.assertEqual(rows, [{'walletTransactionId': 'x'}])
+        call = req.post.call_args_list[1]
+        self.assertIn('/dataservices/v1/issuing/merchantexpenses', call[0][0])
+        self.assertEqual(call[1]['params']['PageNumber'], 1)
+
+    @patch(VIVA_PATH)
+    def test_mt940_returns_text_or_none(self, req):
+        req.post.return_value = _resp({'access_token': 't', 'expires_in': 3600})
+        ok = MagicMock(status_code=200, text=':62F:C260731EUR1,00'); ok.raise_for_status.return_value = None
+        empty = MagicMock(status_code=204, text='')
+        req.get.side_effect = [ok, empty]
+        client = VivaClient('id', 'sec', 'production')
+        self.assertEqual(client.mt940(date(2026, 7, 31)), ':62F:C260731EUR1,00')
+        self.assertIsNone(client.mt940(date(2026, 7, 30)))
+        self.assertEqual(req.get.call_args_list[0][1]['params'], {'ReportDate': '2026-07-31'})

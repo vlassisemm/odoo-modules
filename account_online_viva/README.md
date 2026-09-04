@@ -21,8 +21,14 @@ credentials — no third-party aggregator and no Odoo online-sync proxy.
   re-runs and overlapping windows never create duplicates
 - Imports only real balance movements (Viva `typeId` 20/21); available-balance
   holds such as card-authorisation reserves (`typeId` 32) are ignored
-- Readable labels from Viva's transaction sub-types ("Card commission",
-  "Card payments clearance", "CLOUDFLARE (Card purchase)", …)
+- Readable labels from Viva's transaction sub-types, enriched from the other
+  Data Services feeds: clearance and commission lines carry the shop order
+  reference and customer of the settled sale ("Card payments clearance:
+  Shop order 1042, CUSTOMER NAME"), card purchases carry merchant, city,
+  country, masked card and MCC ("ACME SUPPLIES, ATHENS GRC (Card
+  purchase ••1234)")
+- Books an **opening balance** from Viva's MT940 statement on the first sync
+  of an empty journal, so the journal balance matches Viva
 - Skips transactions whose currency differs from the journal currency (a run
   where *everything* is skipped is flagged as an error and does not advance
   the incremental cursor), and transactions dated on or before an accounting
@@ -102,6 +108,28 @@ odoo-bin -d <dbname> -i account_online_viva --stop-after-init
 Imported lines land on the journal's bank statement lines for normal
 reconciliation.
 
+## Limitations
+
+- **Opening balance:** booked once, on the first sync of a journal without
+  statement lines, from the MT940 closing balance of the day before the
+  import window (up to 14 days back). Set the *earliest import date* before
+  the first sync: backfilling a period *before* that date with *Fetch Date
+  Range* double counts, since the opening line already includes it (delete
+  the opening line and *Reset Sync* after a deep backfill). Like Odoo's own
+  online sync, the opening line must be reconciled once against your
+  opening-balance / equity account.
+- **Enrichment is best effort:** the sales and card-expenses calls fail
+  soft (plain labels, a warning in the log). Two sales with the same amount on
+  the same day (typical for the flat refund fee) are matched in feed order, so
+  the customer named on a *commission* line can be swapped between them.
+  Foreign-currency card purchases do not appear in the card-expenses feed and
+  keep the plain "MERCHANT (Card purchase)" label. The sales endpoint works
+  with the Data Services token today, although Viva's spec lists another
+  scope for it.
+- **Card data:** Viva exposes no original currency/amount for foreign card
+  purchases (only the separate foreign-currency fee line mentions them), and
+  no receipt reference.
+
 ## Security
 
 - **Viva Accounts:** read-only for *Invoicing & Banks* users
@@ -123,6 +151,9 @@ reconciliation.
 | OAuth2 token       | `POST {accounts-host}/connect/token`                         | — (client-credentials) |
 | Wallet discovery   | `GET {api-host}/merchants/v1/wallets`                        | `urn:viva:payments:core:api:merchants:wallets` |
 | Transaction search | `POST {api-host}/dataservices/v2/accounttransactions/Search` | `urn:viva:payments:biservices:datafileapi` |
+| Sale transactions (enrichment) | `POST {api-host}/dataservices/v2/transactions/Search` | same token (works live; spec lists another scope) |
+| Card expenses (enrichment) | `POST {api-host}/dataservices/v1/issuing/merchantexpenses` | `urn:viva:payments:biservices:datafileapi` |
+| MT940 (opening balance) | `GET {api-host}/dataservices/v2/merchants/mt940?ReportDate=` | `urn:viva:payments:biservices:datafileapi` |
 
 Hosts by environment:
 

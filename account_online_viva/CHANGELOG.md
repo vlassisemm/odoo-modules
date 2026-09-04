@@ -6,6 +6,35 @@ portion of the Odoo manifest version (`19.0.{major}.{minor}.{patch}`).
 Importance: **patch** = fixes without data impact, **minor** = backward-compatible
 features/fields, **major** = breaking changes requiring migration scripts.
 
+## [1.3.0] - 2026-09-04
+
+Enrichment from the other Data Services feeds (same `datafileapi` scope;
+all verified live 2026-09-04). Every extra call is best effort: a failing
+feed is logged and the sync continues with plain labels.
+
+### Added
+- **Sale references on clearance and commission lines.** Each sale in
+  `POST /dataservices/v2/transactions/Search` produces one "Card payments
+  clearance" line (gross, same day and amount) and one "Card commission"
+  line (= `totalCommission`). Matching lines are labelled
+  "Card payments clearance: Shop order 1042, CUSTOMER NAME", the
+  customer becomes the partner name, and a `viva_sale` subset is stored in
+  the line's transaction details (order code, reference, amounts, status —
+  never the customer's e-mail or phone). Refunds read "Card refund
+  clearance: …".
+- **Card purchase details** from `POST /dataservices/v1/issuing/merchantexpenses`
+  (its `walletTransactionId` equals the account transaction id): merchant
+  with city and country, masked card number and MCC —
+  "ACME SUPPLIES, ATHENS GRC (Card purchase ••1234)"; a `viva_card`
+  subset is stored in the transaction details.
+- **Opening balance.** On the first sync of a journal without statement
+  lines, the closing balance of the day before the import window is read
+  from `GET /dataservices/v2/merchants/mt940` (looking back up to 14 days
+  for a statement day) and booked as "Opening statement: first
+  synchronization", as Odoo's online sync does. Skipped when the MT940
+  currency differs from the journal currency.
+- `VivaClient.search_sales()`, `merchant_expenses()`, `mt940()`.
+
 ## [1.2.0] - 2026-09-04
 
 Findings from the first live import against production data.

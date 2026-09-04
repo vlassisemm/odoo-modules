@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Odoo Server 19.0+e\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-04 01:16+0000\n"
-"PO-Revision-Date: 2026-09-04 01:16+0000\n"
+"POT-Creation-Date: 2026-09-04 06:34+0000\n"
+"PO-Revision-Date: 2026-09-04 06:34+0000\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "MIME-Version: 1.0\n"
@@ -21,6 +21,12 @@ msgstr ""
 msgid ""
 "%(n)s transaction(s) skipped: their currency (%(wallet)s) does not match the"
 " journal currency (%(journal)s). Fix the journal currency, then fetch again."
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "%s (refund)"
 msgstr ""
 
 #. module: account_online_viva
@@ -140,6 +146,30 @@ msgstr ""
 #. odoo-python
 #: code:addons/account_online_viva/models/viva_account.py:0
 msgid "Bank Transactions"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Card commission"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Card payments clearance"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Card purchase"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Card refund clearance"
 msgstr ""
 
 #. module: account_online_viva
@@ -482,6 +512,20 @@ msgid "Open the Viva account to see the error"
 msgstr ""
 
 #. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid ""
+"Opening balance of %(amount)s booked on %(date)s from the Viva MT940 "
+"statement."
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "Opening statement: first synchronization"
+msgstr ""
+
+#. module: account_online_viva
 #: model:ir.model.fields.selection,name:account_online_viva.selection__res_company__viva_environment__production
 msgid "Production"
 msgstr ""
@@ -740,6 +784,12 @@ msgstr ""
 #. odoo-python
 #: code:addons/account_online_viva/models/viva_account.py:0
 msgid "journal_id"
+msgstr ""
+
+#. module: account_online_viva
+#. odoo-python
+#: code:addons/account_online_viva/models/viva_account.py:0
+msgid "order %s"
 msgstr ""
 
 #. module: account_online_viva

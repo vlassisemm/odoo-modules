@@ -127,6 +127,79 @@ class VivaClient:
             })
         return wallets
 
+    def _post_paged(self, path, body, page_size, page_param='Page', label='search'):
+        """POST ``path`` page by page until a short page / 204 and return
+        all rows. Used by every Data Services search endpoint."""
+        url = '%s%s' % (self._api_host, path)
+        headers = self._headers()
+        rows_all = []
+        page = 1
+        while True:
+            params = {'PageSize': page_size, page_param: page, 'OrderBy': 'Ascending'}
+            try:
+                resp = http_requests.post(url, headers=headers, params=params,
+                                          json=body, timeout=self.timeout)
+                resp.raise_for_status()
+                data = resp.json() if resp.status_code != 204 else None
+            except Exception as exc:
+                raise VivaApiError('Viva %s failed: %s' % (label, exc)) from exc
+            if data is None:
+                break
+            rows = data if isinstance(data, list) else pick(
+                data, 'data', 'Data', 'transactions', 'Transactions', 'Items',
+                default=None) or []
+            if not rows:
+                break
+            rows_all.extend(rows)
+            if len(rows) < page_size:
+                break
+            if page >= MAX_PAGES:
+                raise VivaApiError('Viva %s exceeded %s pages; aborting.' % (label, MAX_PAGES))
+            page += 1
+        return rows_all
+
+    def search_sales(self, date_from, date_to, page_size=100):
+        """Sale transactions (customer payments/refunds) in the period.
+        Rows carry merchantTrns (shop order reference), fullName, amount,
+        totalCommission, statusId, transactionTypeId (5 payment, 4 refund)
+        — and customer contact details, which callers must not persist."""
+        body = {
+            'DateFrom': date_from.strftime('%Y-%m-%d'),
+            'DateTo': date_to.strftime('%Y-%m-%d'),
+        }
+        return self._post_paged('/dataservices/v2/transactions/Search', body,
+                                min(max(int(page_size), 1), 100), label='sales search')
+
+    def merchant_expenses(self, date_from, date_to, page_size=100):
+        """Debit-card expenses in the period. ``walletTransactionId`` equals
+        the account transaction id (verified live 2026-09-04); rows add
+        maskedNumber, mcc, description (merchant\\street\\city\\zip country),
+        authorizationDate, clearanceDate, cardHolder."""
+        body = {
+            'DateFrom': date_from.strftime('%Y-%m-%d'),
+            'DateTo': date_to.strftime('%Y-%m-%d'),
+        }
+        return self._post_paged('/dataservices/v1/issuing/merchantexpenses', body,
+                                min(max(int(page_size), 1), 100),
+                                page_param='PageNumber', label='card expenses')
+
+    def mt940(self, report_date):
+        """MT940 statement text for one past day, or None when Viva has no
+        statement for that date (HTTP 204)."""
+        url = '%s/dataservices/v2/merchants/mt940' % self._api_host
+        headers = self._headers()
+        try:
+            resp = http_requests.get(
+                url, headers=headers,
+                params={'ReportDate': report_date.strftime('%Y-%m-%d')},
+                timeout=self.timeout)
+            if resp.status_code == 204:
+                return None
+            resp.raise_for_status()
+            return resp.text
+        except Exception as exc:
+            raise VivaApiError('Viva MT940 request failed: %s' % exc) from exc
+
     def search_transactions(self, wallet_id, date_from, date_to, page_size=500):
         url = '%s/dataservices/v2/accounttransactions/Search' % self._api_host
         wallet_id_payload = int(wallet_id) if str(wallet_id).isdigit() else wallet_id
