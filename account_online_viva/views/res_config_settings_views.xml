@@ -7,14 +7,36 @@
         <field name="model">res.config.settings</field>
         <field name="inherit_id" ref="account.res_config_settings_view_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//block[@id='bank_cash']" position="inside">
-                <setting string="Viva Bank Connector"
-                         help="Credentials for importing Viva business-account transactions">
-                    <field name="viva_environment"/>
-                    <field name="viva_client_id"/>
-                    <field name="viva_client_secret" password="True"
-                           groups="base.group_system"/>
+            <!-- Own block rather than inside "Bank &amp; Cash": that block is wrapped in
+                 account.group_account_user, which Community never grants. -->
+            <xpath expr="//t[block[@id='bank_cash']]" position="after">
+                <block title="Bank Feeds" id="viva_bank_feeds">
+                <setting id="viva_bank_connector" string="Viva.com" company_dependent="1"
+                         help="Import Viva business-account transactions with your own API credentials">
+                    <div class="content-group">
+                        <div class="row mt16">
+                            <label for="viva_environment" string="Environment" class="col-lg-4 o_light_label"/>
+                            <field name="viva_environment"/>
+                        </div>
+                        <div class="row">
+                            <label for="viva_client_id" string="Client ID" class="col-lg-4 o_light_label"/>
+                            <field name="viva_client_id"/>
+                        </div>
+                        <div class="row" groups="base.group_system">
+                            <label for="viva_client_secret" string="Client Secret" class="col-lg-4 o_light_label"/>
+                            <field name="viva_client_secret" password="True"/>
+                        </div>
+                    </div>
+                    <div class="mt8">
+                        <button name="%(viva_setup_wizard_action)d" type="action"
+                                string="Discover Wallets" icon="oi-arrow-right" class="btn-link"
+                                groups="account.group_account_manager"/>
+                        <button name="%(viva_account_action)d" type="action"
+                                string="Viva Accounts" icon="oi-arrow-right" class="btn-link"
+                                groups="account.group_account_manager"/>
+                    </div>
                 </setting>
+                </block>
             </xpath>
         </field>
     </record>

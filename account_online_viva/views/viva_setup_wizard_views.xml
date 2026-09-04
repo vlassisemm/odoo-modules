@@ -6,24 +6,25 @@
         <field name="name">viva.setup.wizard.form</field>
         <field name="model">viva.setup.wizard</field>
         <field name="arch" type="xml">
-            <form string="Viva Setup">
-                <p>Validate your Viva credentials and import the available wallets as bank journals.</p>
-                <field name="company_id" groups="base.group_multi_company"/>
+            <form string="Discover Viva Wallets">
+                <div class="mb-3">
+                    Odoo will validate the Viva credentials and create a bank journal
+                    and a Viva account for every wallet that is not connected yet.
+                </div>
+                <group>
+                    <field name="company_id" groups="base.group_multi_company"/>
+                </group>
                 <footer>
-                    <button name="action_discover" type="object" string="Test &amp; Discover Wallets" class="btn-primary"/>
-                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                    <button name="action_discover" type="object" string="Discover Wallets" class="btn-primary" data-hotkey="q"/>
+                    <button string="Discard" class="btn-secondary" special="cancel" data-hotkey="x"/>
                 </footer>
             </form>
         </field>
     </record>
     <record id="viva_setup_wizard_action" model="ir.actions.act_window">
-        <field name="name">Viva: Discover Wallets</field>
+        <field name="name">Discover Viva Wallets</field>
         <field name="res_model">viva.setup.wizard</field>
         <field name="view_mode">form</field>
         <field name="target">new</field>
     </record>
-    <menuitem id="viva_setup_menu" name="Viva: Discover Wallets"
-              parent="account.menu_finance_configuration"
-              action="viva_setup_wizard_action" sequence="101"
-              groups="account.group_account_manager"/>
 </odoo>

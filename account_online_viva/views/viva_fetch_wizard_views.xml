@@ -14,14 +14,22 @@
         <field name="model">viva.fetch.wizard</field>
         <field name="arch" type="xml">
             <form string="Fetch Viva Transactions">
+                <div class="mb-3">
+                    Import transactions for a specific period. Already imported
+                    transactions are skipped and the automatic schedule is not affected.
+                </div>
                 <group>
-                    <field name="viva_account_id"/>
-                    <field name="date_from"/>
-                    <field name="date_to"/>
+                    <group>
+                        <field name="viva_account_id" options="{'no_create': True}"/>
+                    </group>
+                    <group>
+                        <field name="date_from" string="From"/>
+                        <field name="date_to" string="To"/>
+                    </group>
                 </group>
                 <footer>
-                    <button name="action_fetch" type="object" string="Fetch" class="btn-primary"/>
-                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                    <button name="action_fetch" type="object" string="Fetch Transactions" class="btn-primary" data-hotkey="q"/>
+                    <button string="Discard" class="btn-secondary" special="cancel" data-hotkey="x"/>
                 </footer>
             </form>
         </field>

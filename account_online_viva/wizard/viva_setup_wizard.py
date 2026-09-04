@@ -1,7 +1,7 @@
 # Copyright 2026 Vlassis Emmanouil
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
 from odoo import _, fields, models
-from odoo.exceptions import UserError
+from odoo.exceptions import AccessError, UserError
 
 from ..models.viva_client import VivaApiError
 
@@ -15,8 +15,8 @@ class VivaSetupWizard(models.TransientModel):
 
     def action_discover(self):
         self.ensure_one()
-        if not self.env.user.has_group('account.group_account_manager'):
-            raise UserError(_('Only accounting managers can configure Viva.'))
+        if not self.env.su and not self.env.user.has_group('account.group_account_manager'):
+            raise AccessError(_('Only accounting managers can configure Viva.'))
         company = self.company_id.sudo()
         if not (company.viva_client_id and company.viva_client_secret):
             raise UserError(_('Set the Viva Client ID and Secret first (Settings).'))

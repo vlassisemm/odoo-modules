@@ -38,8 +38,11 @@ class VivaAccount(models.Model):
     sync_start_date = fields.Date(
         default=lambda self: fields.Date.context_today(self) - relativedelta(days=90),
         help='Earliest date to import; transactions before this are ignored.')
-    last_successful_to = fields.Datetime(readonly=True)
-    last_error = fields.Text(readonly=True)
+    last_successful_to = fields.Date(
+        string='Fetched Until', readonly=True,
+        help='End of the last successful automatic fetch window. The next '
+             'fetch restarts 7 days before this date.')
+    last_error = fields.Text(string='Last Error', readonly=True)
     active = fields.Boolean(default=True)
 
     _journal_uniq = models.Constraint(
@@ -94,7 +97,6 @@ class VivaAccount(models.Model):
         currency = self.journal_id.currency_id or self.company_id.currency_id
         return {
             'viva_transaction_id': txn_id and str(txn_id),
-            # NOTE (verify): amount is signed decimal; confirm not minor-units.
             'amount': currency.round(float(amount)),
             'date': fields.Date.to_date(date_str[:10]) if date_str else False,
             'payment_ref': label,
@@ -164,8 +166,7 @@ class VivaAccount(models.Model):
         date_to = date_to or fields.Date.context_today(self)
         if date_from is None:
             if self.last_successful_to:
-                date_from = fields.Datetime.to_datetime(self.last_successful_to).date() \
-                    - relativedelta(days=OVERLAP_DAYS)
+                date_from = self.last_successful_to - relativedelta(days=OVERLAP_DAYS)
             else:
                 date_from = self.sync_start_date or (date_to - relativedelta(days=90))
             # sync_start_date only bounds the automatic window; explicit dates
@@ -219,7 +220,7 @@ class VivaAccount(models.Model):
 
         state_vals = {'last_error': False}
         if update_watermark:
-            state_vals['last_successful_to'] = fields.Datetime.to_datetime(date_to)
+            state_vals['last_successful_to'] = date_to
         self.sudo().write(state_vals)
         if created or skipped_currency or skipped_lock_date:
             self.sudo().message_post(
@@ -236,22 +237,49 @@ class VivaAccount(models.Model):
 
     def action_viva_fetch_now(self):
         self.ensure_one()
-        if not self.env.su and not self.env.user.has_group('account.group_account_user'):
+        if not self.env.su and not self.env.user.has_group('account.group_account_basic'):
             raise AccessError(_('You are not allowed to fetch Viva transactions.'))
         self._viva_sync_one()
         return self._viva_reconcile_action()
 
-    def _viva_reconcile_action(self):
+    def action_viva_reset_sync(self):
+        """Forget the incremental watermark so the next fetch restarts from
+        the earliest import date (the cron then re-imports; dedup makes this
+        safe)."""
+        if not self.env.su and not self.env.user.has_group('account.group_account_manager'):
+            raise AccessError(_('Only accounting managers can reset a Viva sync.'))
+        self.sudo().write({'last_successful_to': False, 'last_error': False})
+        for account in self.sudo():
+            account.message_post(
+                body=_('Viva sync reset: the next fetch restarts from %s.',
+                       account.sync_start_date or _('the default window')),
+                subtype_xmlid='mail.mt_note')
+
+    def action_viva_open_journal(self):
         self.ensure_one()
-        # Edition-agnostic: open the journal's statement lines. On Enterprise you may
-        # route to the bank reconciliation widget instead.
         return {
             'type': 'ir.actions.act_window',
-            'name': _('Viva Transactions'),
+            'res_model': 'account.journal',
+            'res_id': self.journal_id.id,
+            'view_mode': 'form',
+            'target': 'current',
+        }
+
+    def _viva_reconcile_action(self):
+        self.ensure_one()
+        journal = self.journal_id
+        if hasattr(journal, 'action_open_reconcile'):
+            # Enterprise (account_accountant): the bank reconciliation widget,
+            # exactly where the native "Fetch Transactions" lands.
+            return journal.action_open_reconcile()
+        # Community: the journal's statement lines.
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Bank Transactions'),
             'res_model': 'account.bank.statement.line',
             'view_mode': 'list,form',
-            'domain': [('journal_id', '=', self.journal_id.id)],
-            'context': {'create': False},
+            'domain': [('journal_id', '=', journal.id)],
+            'context': {'create': False, 'default_journal_id': journal.id},
         }
 
     @api.model
@@ -263,7 +291,20 @@ class VivaAccount(models.Model):
             remaining -= 1
             company = account.company_id
             if company.id not in clients:
-                clients[company.id] = company._viva_get_client()
+                sudo_company = company.sudo()
+                if not (sudo_company.viva_client_id and sudo_company.viva_client_secret):
+                    # Warn once per company; flag the accounts without
+                    # spamming their chatter every run.
+                    _logger.warning('Viva cron: company %s has no Viva credentials; '
+                                    'skipping its accounts.', company.name)
+                    clients[company.id] = None
+                else:
+                    clients[company.id] = company._viva_get_client()
+            if clients[company.id] is None:
+                account.sudo().last_error = _(
+                    'Viva credentials are not configured for company %s.', company.name)
+                self.env['ir.cron']._commit_progress(processed=1, remaining=remaining)
+                continue
             try:
                 with self.env.cr.savepoint():
                     account._viva_sync_one(client=clients[company.id])

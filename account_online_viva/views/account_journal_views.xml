@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Vlassis Emmanouil -->
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl). -->
+<odoo>
+    <!-- Mirrors how Odoo's own online synchronization extends the journal form:
+         the Viva settings live under "Bank Feeds", with link-style actions. -->
+    <record id="view_account_journal_form_viva" model="ir.ui.view">
+        <field name="name">account.journal.form.viva</field>
+        <field name="model">account.journal</field>
+        <field name="inherit_id" ref="account.view_account_journal_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[@name='bank_account_number']" position="inside">
+                <field name="viva_account_id" invisible="1"/>
+                <field name="viva_last_error" invisible="1"/>
+                <field name="viva_wallet_id"
+                       invisible="bank_statements_source != 'viva'"
+                       required="bank_statements_source == 'viva'"
+                       placeholder="e.g. 123456789"/>
+                <field name="viva_sync_start_date"
+                       invisible="bank_statements_source != 'viva' or not viva_account_id"/>
+                <field name="viva_last_successful_to"
+                       invisible="bank_statements_source != 'viva' or not viva_account_id"/>
+                <div class="o_cell flex-grow-1 flex-sm-grow-0"
+                     invisible="bank_statements_source != 'viva' or not viva_account_id"/>
+                <div class="d-flex flex-column"
+                     invisible="bank_statements_source != 'viva' or not viva_account_id">
+                    <div class="text-danger mb-1" invisible="not viva_last_error">
+                        <i class="fa fa-exclamation-triangle me-1"/>Last fetch failed
+                    </div>
+                    <div>
+                        <button name="action_viva_fetch_now" class="oe_link oe_inline ps-0 py-0" type="object"
+                                groups="account.group_account_basic">
+                            <i class="oi oi-arrow-right me-2"/>Fetch Transactions
+                        </button>
+                    </div>
+                    <div>
+                        <button name="action_viva_fetch_range" class="oe_link oe_inline ps-0 py-0" type="object"
+                                groups="account.group_account_basic">
+                            <i class="oi oi-arrow-right me-2"/>Fetch Date Range
+                        </button>
+                    </div>
+                    <div>
+                        <button name="action_viva_open_account" class="oe_link oe_inline ps-0 py-0" type="object"
+                                groups="account.group_account_manager">
+                            <i class="oi oi-arrow-right me-2"/>Viva Account
+                        </button>
+                    </div>
+                </div>
+            </xpath>
+        </field>
+    </record>
+</odoo>

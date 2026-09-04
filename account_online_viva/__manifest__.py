@@ -2,7 +2,7 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
 {
     'name': 'Viva Bank Connector',
-    'version': '19.0.1.0.1',
+    'version': '19.0.1.1.0',
     'category': 'Accounting/Accounting',
     'summary': 'Import Viva (viva.com) business-account transactions as bank statement lines',
     'author': 'Vlassis Emmanouil',
@@ -15,11 +15,12 @@
         'security/ir.model.access.csv',
         'security/viva_security.xml',
         'data/ir_cron.xml',
-        'views/res_config_settings_views.xml',
-        'views/account_journal_dashboard_views.xml',
         'views/viva_fetch_wizard_views.xml',
         'views/viva_account_views.xml',
         'views/viva_setup_wizard_views.xml',
+        'views/res_config_settings_views.xml',
+        'views/account_journal_views.xml',
+        'views/account_journal_dashboard_views.xml',
     ],
     'assets': {},
 }

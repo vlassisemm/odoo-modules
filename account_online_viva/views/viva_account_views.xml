@@ -6,16 +6,41 @@
         <field name="name">viva.account.list</field>
         <field name="model">viva.account</field>
         <field name="arch" type="xml">
-            <list>
+            <list decoration-danger="last_error">
                 <field name="name"/>
                 <field name="journal_id"/>
                 <field name="wallet_id"/>
+                <field name="iban" optional="hide"/>
                 <field name="currency_id"/>
+                <field name="sync_start_date" optional="hide"/>
                 <field name="last_successful_to"/>
+                <field name="last_error" optional="hide"/>
                 <field name="company_id" groups="base.group_multi_company"/>
+                <button name="action_viva_fetch_now" type="object" icon="fa-refresh"
+                        title="Fetch Transactions" groups="account.group_account_basic"/>
             </list>
         </field>
     </record>
+
+    <record id="viva_account_view_search" model="ir.ui.view">
+        <field name="name">viva.account.search</field>
+        <field name="model">viva.account</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="journal_id"/>
+                <field name="wallet_id"/>
+                <filter name="error" string="Sync Error" domain="[('last_error', '!=', False)]"/>
+                <separator/>
+                <filter name="inactive" string="Archived" domain="[('active', '=', False)]"/>
+                <separator/>
+                <filter name="group_journal" string="Journal" context="{'group_by': 'journal_id'}"/>
+                <filter name="group_company" string="Company" context="{'group_by': 'company_id'}"
+                        groups="base.group_multi_company"/>
+            </search>
+        </field>
+    </record>
+
     <record id="viva_account_view_form" model="ir.ui.view">
         <field name="name">viva.account.form</field>
         <field name="model">viva.account</field>
@@ -23,28 +48,50 @@
             <form>
                 <header>
                     <button name="action_viva_fetch_now" type="object"
-                            string="Fetch now" class="btn-primary"
-                            groups="account.group_account_user"/>
+                            string="Fetch Transactions" class="btn-primary"
+                            groups="account.group_account_basic"/>
                     <button name="%(viva_fetch_wizard_action)d" type="action"
-                            string="Fetch (date range)"
-                            groups="account.group_account_user"
+                            string="Fetch Date Range"
+                            groups="account.group_account_basic"
                             context="{'default_viva_account_id': id}"/>
+                    <button name="action_viva_reset_sync" type="object"
+                            string="Reset Sync"
+                            groups="account.group_account_manager"
+                            invisible="not last_successful_to and not last_error"
+                            confirm="The next fetch will restart from the earliest import date. Already imported transactions are never duplicated. Continue?"/>
                 </header>
                 <sheet>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_viva_open_journal" type="object"
+                                class="oe_stat_button" icon="fa-university">
+                            <div class="o_stat_info">
+                                <span class="o_stat_text">Journal</span>
+                            </div>
+                        </button>
+                    </div>
+                    <div class="alert alert-danger" role="alert" invisible="not last_error">
+                        <strong>Last sync failed.</strong>
+                        <field name="last_error" nolabel="1" readonly="1" class="d-block"/>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="e.g. Viva Main Wallet"/></h1>
+                    </div>
                     <group>
-                        <group>
-                            <field name="name"/>
-                            <field name="journal_id"/>
+                        <group string="Viva">
+                            <field name="active" invisible="1"/>
                             <field name="wallet_id"/>
-                            <field name="iban"/>
-                            <field name="currency_id"/>
                             <field name="company_id" groups="base.group_multi_company"/>
                         </group>
-                        <group>
+                        <group string="Bank Journal">
+                            <field name="journal_id"/>
+                            <field name="iban"/>
+                            <field name="currency_id"/>
+                        </group>
+                        <group string="Synchronization">
                             <field name="sync_start_date"/>
                             <field name="last_successful_to"/>
-                            <field name="active"/>
-                            <field name="last_error"/>
                         </group>
                     </group>
                 </sheet>
@@ -52,13 +99,26 @@
             </form>
         </field>
     </record>
+
     <record id="viva_account_action" model="ir.actions.act_window">
         <field name="name">Viva Accounts</field>
         <field name="res_model">viva.account</field>
         <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="viva_account_view_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Connect a Viva.com wallet to a bank journal
+            </p><p>
+                Run <i>Discover Wallets</i> from Accounting Settings to create one per wallet,
+                or set the Viva wallet under <i>Bank Feeds</i> on a bank journal.
+                Transactions are then fetched every 12 hours and land in the journal, ready for reconciliation.
+            </p>
+        </field>
     </record>
+
+    <!-- Sits with the bank configuration, where Odoo's own "Online Synchronization" lives. -->
     <menuitem id="viva_account_menu" name="Viva Accounts"
-              parent="account.menu_finance_configuration"
-              action="viva_account_action" sequence="100"
+              parent="account.account_account_menu"
+              action="viva_account_action" sequence="16"
               groups="account.group_account_manager"/>
 </odoo>

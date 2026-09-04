@@ -6,6 +6,48 @@ portion of the Odoo manifest version (`19.0.{major}.{minor}.{patch}`).
 Importance: **patch** = fixes without data impact, **minor** = backward-compatible
 features/fields, **major** = breaking changes requiring migration scripts.
 
+## [1.1.0] - 2026-09-04
+
+### Added
+- Journal-level Viva configuration, mirroring Odoo's own bank feeds: choosing
+  *Viva.com* under **Bank Feeds** on a bank journal reveals the wallet id
+  (entering one creates the Viva account), the earliest import date, the
+  *Fetched Until* date, a failure indicator and link-style actions
+  (*Fetch Transactions*, *Fetch Date Range*, *Viva Account*).
+- Dashboard bank card: native-style *Fetch Transactions* link with a
+  *Fetched until …* status line (or a red *Last fetch failed* link).
+- *Reset Sync* action (manager-only) to clear the incremental watermark.
+- Viva Accounts list: search view (Sync Error / Archived filters, group by),
+  red rows on error, inline fetch button, optional columns; form: title,
+  archived ribbon, journal smart button, error alert shown only when set;
+  empty-state help text.
+- Settings: own *Bank Feeds › Viva.com* block (Odoo's *Bank & Cash* block is
+  Enterprise-only) with labelled credential rows plus *Discover Wallets* and
+  *Viva Accounts* links.
+- Dashboard: a connected Viva journal no longer shows the "Connect your bank"
+  helper text.
+
+### Changed
+- `viva.account.last_successful_to` is now a `Date` (*Fetched Until*); it
+  always held a window end date and displayed a spurious time.
+- Menus: *Viva Accounts* moved into Configuration › Accounting (with
+  Journals, where Odoo's own *Online Synchronization* sits); the
+  *Discover Wallets* menu entry is gone — the wizard is launched from Settings.
+- Native wording throughout: *Fetch Transactions*, *Fetch Date Range*,
+  *Discover Wallets*, *Discard*.
+- After a fetch, open the journal's native view: the bank reconciliation
+  widget on Enterprise (`action_open_reconcile`), the journal's statement
+  lines on Community.
+- Cron: a company without credentials is logged once and its accounts are
+  flagged with `last_error` instead of failing (and posting a note) per account.
+- Setup wizard group check raises `AccessError` like the other actions.
+
+### Fixed
+- Fetch actions, the date-range wizard and read access on Viva accounts now
+  require `account.group_account_basic` (as Odoo's own online sync does)
+  instead of `account.group_account_user`, which Community never grants —
+  on Community even an Accounting Administrator could not fetch.
+
 ## [1.0.1] - 2026-07-23
 
 ### Fixed

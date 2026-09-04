@@ -11,8 +11,8 @@ credentials — no third-party aggregator and no Odoo online-sync proxy.
   `account.bank.statement.line` records on a bank journal
 - **Scheduled polling** every 12 hours via an `ir.cron` job (incremental, with a
   7-day overlap window so nothing is missed at the boundary)
-- **Manual fetch** — a *Fetch now* button on the Viva Account form and a
-  *Fetch Viva* button on the bank journal's dashboard card
+- **Manual fetch** — *Fetch Transactions* on the bank journal (form and
+  dashboard card) or on the Viva Account form
 - **Date-range fetch** wizard for one-off historical imports (does not move the
   incremental cursor)
 - **Wallet discovery** wizard that tests your credentials, lists your wallets,
@@ -68,15 +68,17 @@ odoo-bin -d <dbname> -i account_online_viva --stop-after-init
 
 ## Configuration
 
-1. **Credentials** — *Settings > Accounting > Bank & Cash > Viva Bank
-   Connector*: pick the Environment (Demo / Production) and enter the Client ID
+1. **Credentials** — *Settings > Accounting > Bank Feeds > Viva.com*: pick the Environment (Demo / Production) and enter the Client ID
    and Client Secret. Credentials are stored per-company, so multi-company
    setups can use different ones.
-2. **Discover wallets** — *Accounting > Configuration > Viva: Discover Wallets*
-   (accounting managers only). This tests the credentials and creates a bank
-   journal + Viva Account for each wallet that does not already have one.
-3. **Review accounts** — *Accounting > Configuration > Viva Accounts*. Adjust the
-   *earliest import date* per account if needed (defaults to 90 days back).
+2. **Connect wallets** — either click **Discover Wallets** in that settings
+   block (accounting managers only; tests the credentials and creates a bank
+   journal + Viva Account for each wallet that does not already have one), or
+   open a bank journal, choose **Viva.com** under *Bank Feeds* and type the
+   wallet id — the Viva Account is created for you.
+3. **Review** — the journal form shows the earliest import date (defaults to
+   90 days back), the *Fetched Until* date and any failure; the full list is
+   under *Accounting > Configuration > Viva Accounts*.
 
 ## Usage
 
@@ -84,24 +86,26 @@ odoo-bin -d <dbname> -i account_online_viva --stop-after-init
   and imports new transactions for every configured account. Each account syncs
   inside its own savepoint, so one account failing does not block the others;
   failures are recorded on the account (`last_error`) and posted to its chatter.
-- **Manual (current window):** open a Viva Account and click **Fetch now**, or
-  click **Fetch Viva** on the bank journal's dashboard card.
-- **Manual (historical range):** use the **Fetch Viva Transactions** wizard to
-  import a specific date range without disturbing the incremental watermark.
+- **Manual (current window):** click **Fetch Transactions** on the bank
+  journal's dashboard card or form, or on the Viva Account.
+- **Manual (historical range):** **Fetch Date Range** imports a specific
+  period without disturbing the incremental watermark.
+- **Reset Sync** (managers, on the Viva Account) clears the watermark so the
+  next fetch restarts from the earliest import date; dedup prevents duplicates.
 
 Imported lines land on the journal's bank statement lines for normal
 reconciliation.
 
 ## Security
 
-- **Viva Accounts:** read-only for *Billing / Accounting* users
-  (`account.group_account_user`); create and update for *Accounting Managers*
+- **Viva Accounts:** read-only for *Invoicing & Banks* users
+  (`account.group_account_basic`); create and update for *Accounting Managers*
   (`account.group_account_manager`).
 - **Client Secret:** restricted to *Settings* users (`base.group_system`) and
   excluded from copy, on both the company field and its settings mirror.
-- **Wallet discovery** is manager-only. The manual fetch action also enforces an
-  accounting-user check in Python, so it cannot be triggered over RPC by an
-  unprivileged user.
+- **Wallet discovery** and **Reset Sync** are manager-only. The manual fetch
+  actions also enforce the `account.group_account_basic` check in Python, so
+  they cannot be triggered over RPC by an unprivileged user.
 - A multi-company record rule isolates each company's Viva Accounts. Bookkeeping
   writes performed during a sync run with elevated rights, while the originating
   user remains the creator of the statement lines.

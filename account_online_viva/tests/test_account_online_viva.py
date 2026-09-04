@@ -464,10 +464,9 @@ class TestVivaWindow(VivaCommon):
 
     def test_incremental_uses_last_successful_to_minus_overlap(self):
         from datetime import timedelta
-        from odoo import fields as odoo_fields
         # Set last_successful_to to a known point; sync_start_date is much earlier
         known_dt = date(2026, 4, 10)
-        self.account.last_successful_to = odoo_fields.Datetime.to_datetime(str(known_dt))
+        self.account.last_successful_to = known_dt
 
         client = self._make_client()
         with patch.object(type(self.account), '_viva_get_client', return_value=client):
@@ -480,12 +479,11 @@ class TestVivaWindow(VivaCommon):
 
     def test_incremental_clamped_to_sync_start_date(self):
         from datetime import timedelta
-        from odoo import fields as odoo_fields
         # last_successful_to - 7d would be before sync_start_date; must clamp.
         # Set last_successful_to such that last_successful_to.date() - 7d < sync_start_date
         self.account.sync_start_date = date(2026, 3, 1)
         # last_successful_to = 2026-03-05, so overlap window is before sync_start_date.
-        self.account.last_successful_to = odoo_fields.Datetime.to_datetime('2026-03-05 00:00:00')
+        self.account.last_successful_to = date(2026, 3, 5)
 
         client = self._make_client()
         with patch.object(type(self.account), '_viva_get_client', return_value=client):
@@ -635,9 +633,8 @@ class TestVivaManualFetch(VivaCommon):
         sync.assert_not_called()
 
     def test_date_range_wizard_does_not_advance_incremental_watermark(self):
-        from odoo import fields as odoo_fields
 
-        old_watermark = odoo_fields.Datetime.to_datetime('2026-06-01 12:00:00')
+        old_watermark = date(2026, 6, 1)
         self.account.last_successful_to = old_watermark
         txns = [{'accountTransactionId': 'HIST1', 'amount': -5.0,
                  'valueDate': '2026-02-01', 'counterPart': 'Y', 'currencyCode': 978}]
@@ -761,3 +758,84 @@ class TestCompanyClient(VivaTransactionCase):
             'account_online_viva.timeout', '60s')
         client = self.env.company._viva_get_client()
         self.assertEqual(client.timeout, 60)
+
+
+class TestVivaJournalIntegration(VivaCommon):
+    """Native-look redesign (1.1.0): journal-level fields and actions."""
+
+    def test_last_successful_to_is_a_date(self):
+        field = self.env['viva.account']._fields['last_successful_to']
+        self.assertEqual(field.type, 'date')
+
+    def test_journal_related_fields_reflect_account(self):
+        self.account.write({'last_successful_to': date(2026, 4, 1),
+                            'last_error': 'boom'})
+        self.assertEqual(self.journal.viva_wallet_id, 'W1')
+        self.assertEqual(self.journal.viva_last_successful_to, date(2026, 4, 1))
+        self.assertEqual(self.journal.viva_last_error, 'boom')
+
+    def test_journal_wallet_write_updates_existing_account(self):
+        self.journal.viva_wallet_id = 'W1-new'
+        self.assertEqual(self.account.wallet_id, 'W1-new')
+
+    def test_journal_wallet_write_creates_account_when_missing(self):
+        journal = self.env['account.journal'].create({
+            'name': 'Viva Bank 3', 'type': 'bank', 'code': 'VIVA3',
+            'bank_statements_source': 'viva'})
+        self.assertFalse(journal.viva_account_id)
+        journal.viva_wallet_id = 'W3'
+        self.assertTrue(journal.viva_account_id)
+        self.assertEqual(journal.viva_account_id.wallet_id, 'W3')
+        self.assertEqual(journal.viva_account_id.name, 'Viva Bank 3')
+        self.assertEqual(journal.bank_statements_source, 'viva')
+
+    def test_journal_wallet_write_empty_without_account_is_noop(self):
+        journal = self.env['account.journal'].create({
+            'name': 'Viva Bank 4', 'type': 'bank', 'code': 'VIVA4'})
+        journal.viva_wallet_id = False
+        self.assertFalse(journal.viva_account_id)
+
+    def test_reset_sync_clears_watermark_and_error(self):
+        self.account.write({'last_successful_to': date(2026, 4, 1),
+                            'last_error': 'boom'})
+        self.account.action_viva_reset_sync()
+        self.assertFalse(self.account.last_successful_to)
+        self.assertFalse(self.account.last_error)
+
+    def test_journal_fetch_range_action_targets_wizard(self):
+        action = self.journal.action_viva_fetch_range()
+        self.assertEqual(action['res_model'], 'viva.fetch.wizard')
+        self.assertEqual(action['target'], 'new')
+        self.assertEqual(action['context']['default_viva_account_id'], self.account.id)
+
+    def test_fetch_result_routes_to_native_journal_action(self):
+        action = self.account._viva_reconcile_action()
+        journal = self.journal
+        if hasattr(journal, 'action_open_reconcile'):
+            self.assertEqual(action, journal.action_open_reconcile())
+        else:
+            self.assertEqual(action['res_model'], 'account.bank.statement.line')
+            self.assertIn(('journal_id', '=', journal.id), action['domain'])
+
+    def test_setup_wizard_group_check_is_access_error(self):
+        user = self.env['res.users'].create({
+            'name': 'Plain', 'login': 'viva_plain_setup',
+            'group_ids': [(6, 0, [self.env.ref('base.group_user').id])]})
+        wizard = self.env['viva.setup.wizard'].sudo().create({
+            'company_id': self.company.id})
+        with self.assertRaises(AccessError):
+            wizard.with_user(user).action_discover()
+
+
+class TestVivaCronCredentials(VivaCommon):
+    @mute_logger('odoo.addons.account_online_viva.models.viva_account')
+    def test_cron_skips_company_without_credentials(self):
+        self.company.viva_client_id = False
+        self.company.sudo().viva_client_secret = False
+        with patch.object(VivaClient, 'search_transactions') as search, \
+                patch.object(self.env.cr, 'commit', lambda: None):
+            self.env['viva.account']._cron_viva_fetch()
+        search.assert_not_called()
+        self.account.invalidate_recordset()
+        self.assertTrue(self.account.last_error)
+        self.assertIn('credentials', self.account.last_error.lower())
